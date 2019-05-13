@@ -10,6 +10,7 @@ type RabbitMQConnection interface {
 	Close() error
 	SendPlainString(body string) error
 	Send(body interface{}) error
+	Consume(autoAck, exclusive, noLocal, noWait bool) (<-chan amqp.Delivery, error)
 }
 
 type rabbitMQConnection struct {
@@ -53,4 +54,8 @@ func (c *rabbitMQConnection) sendInternal(publishing amqp.Publishing) error {
 func (c *rabbitMQConnection) Close() error {
 	c.channel.Close()
 	return c.conn.Close()
+}
+
+func (c *rabbitMQConnection) Consume(autoAck, exclusive, noLocal, noWait bool) (<-chan amqp.Delivery, error) {
+	return c.channel.Consume(c.settings.QueueName, "", autoAck, exclusive, noLocal, noWait, nil)
 }
