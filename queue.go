@@ -10,8 +10,20 @@ import (
 type Queue interface {
 	SendPlainString(body string) error
 	Send(body interface{}) error
-	Consume(autoAck, exclusive, noLocal, noWait bool) (<-chan amqp.Delivery, error)
+	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
+	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
 	Close()
+}
+
+type (
+	DeliveryConsumer func(amqp.Delivery) error
+)
+
+type ConsumerSettings struct {
+	AutoAck   bool
+	Exclusive bool
+	NoLocal   bool
+	NoWait    bool
 }
 
 type queue struct {
@@ -56,6 +68,19 @@ func (c *queue) Close() {
 	c.channel.Close()
 }
 
-func (c *queue) Consume(autoAck, exclusive, noLocal, noWait bool) (<-chan amqp.Delivery, error) {
-	return c.channel.Consume(c.queueSettings.QueueName, "", autoAck, exclusive, noLocal, noWait, nil)
+func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error) {
+	return c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+}
+
+func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	if err != nil {
+		return err
+	}
+
+	for item := range channel {
+		deliveryConsumer(item)
+	}
+
+	return nil
 }
