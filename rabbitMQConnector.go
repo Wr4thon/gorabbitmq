@@ -7,32 +7,19 @@ import (
 	"github.com/streadway/amqp"
 )
 
-type RabbitMQConnector interface {
-	Connect(settings QueueSettings) (RabbitMQConnection, error)
+// QueueConnector is the tcp connection for the communication with the RabbitMQ Server
+// can be used to connect to a queue
+type QueueConnector interface {
+	ConnectToQueue(settings QueueSettings) (Queue, error)
 }
 
-type rabbitMQConnector struct {
-	RabbitMQConnector
+type queueConnector struct {
+	QueueConnector
+	connection *amqp.Connection
+	channel    *amqp.Channel
 }
 
-type QueueSettings struct {
-	UserName         string
-	Password         string
-	Host             string
-	Port             int
-	Durable          bool
-	DeleteWhenUnused bool
-	Exclusive        bool
-	NoWait           bool
-	QueueName        string
-}
-
-// NewRabbitMQConnector returns a new instance of the RabbitMQConnector
-func NewRabbitMQConnector() RabbitMQConnector {
-	return &rabbitMQConnector{}
-}
-
-func getConnectionString(queueSettings QueueSettings) string {
+func getConnectionString(queueSettings ConnectionSettings) string {
 	var sb strings.Builder
 
 	sb.WriteString("amqp://")
@@ -48,7 +35,8 @@ func getConnectionString(queueSettings QueueSettings) string {
 	return sb.String()
 }
 
-func (mq *rabbitMQConnector) Connect(settings QueueSettings) (RabbitMQConnection, error) {
+// NewConnection returns a new Instance of a tcp Connection to a RabbitMQ Server
+func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 	connectionString := getConnectionString(settings)
 
 	conn, err := amqp.Dial(connectionString)
@@ -63,12 +51,20 @@ func (mq *rabbitMQConnector) Connect(settings QueueSettings) (RabbitMQConnection
 		return nil, err
 	}
 
-	queue, err := ch.QueueDeclare(
-		settings.QueueName,
-		settings.Durable,
-		settings.DeleteWhenUnused,
-		settings.Exclusive,
-		settings.NoWait,
+	return &queueConnector{
+		connection: conn,
+		channel:    ch,
+	}, err
+}
+
+// ConnectToChannel connects to a channel
+func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings) (Queue, error) {
+	nativeQueue, err := c.channel.QueueDeclare(
+		queueSettings.QueueName,
+		queueSettings.Durable,
+		queueSettings.DeleteWhenUnused,
+		queueSettings.Exclusive,
+		queueSettings.NoWait,
 		nil,
 	)
 
@@ -76,11 +72,10 @@ func (mq *rabbitMQConnector) Connect(settings QueueSettings) (RabbitMQConnection
 		return nil, err
 	}
 
-	connection := &rabbitMQConnection{
-		conn:     conn,
-		channel:  ch,
-		queue:    queue,
-		settings: settings,
+	connection := &queue{
+		queueSettings: queueSettings,
+		channel:       c.channel,
+		queue:         nativeQueue,
 	}
 
 	return connection, nil
