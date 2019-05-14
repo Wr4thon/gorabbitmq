@@ -1,6 +1,7 @@
 package gorabbitmq
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -16,7 +17,13 @@ type QueueConnector interface {
 type queueConnector struct {
 	QueueConnector
 	connection *amqp.Connection
-	channel    *amqp.Channel
+	channel    *channel
+}
+
+type channel struct {
+	channel             *amqp.Channel
+	channelErrorChannel chan *amqp.Error
+	closed              bool
 }
 
 func getConnectionString(queueSettings ConnectionSettings) string {
@@ -45,21 +52,81 @@ func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 		return nil, err
 	}
 
-	ch, err := conn.Channel()
-
-	if err != nil {
-		return nil, err
+	connector := &queueConnector{
+		connection: conn,
 	}
 
-	return &queueConnector{
-		connection: conn,
-		channel:    ch,
-	}, err
+	connector.createChannel()
+
+	return connector, err
+}
+
+func (c *queueConnector) watchChannelConnection() {
+	for elem := range c.channel.channelErrorChannel {
+		if c.channel.closed {
+			continue
+		}
+
+		fmt.Println(elem)
+		c.createChannel()
+	}
+}
+
+func (c *queueConnector) watchChannelClosed() {
+
+}
+
+func (c *queueConnector) createChannel() error {
+	ch, err := c.connection.Channel()
+
+	channelErrorChannel := make(chan *amqp.Error)
+
+	if c.channel != nil && !c.channel.closed {
+		close(c.channel.channelErrorChannel)
+	}
+
+	c.channel = &channel{
+		channel:             ch,
+		channelErrorChannel: channelErrorChannel,
+		closed:              false,
+	}
+
+	if err != nil {
+		return err
+	}
+
+	go c.watchChannelConnection()
+	go c.watchChannelClosed()
+
+	ch.NotifyClose(channelErrorChannel)
+
+	return nil
+}
+
+func (c *channel) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	return c.channel.Publish(exchange, key, mandatory, immediate, msg)
+}
+
+func (c *channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
+	return c.channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+}
+
+func (c *channel) close() {
+	c.closed = true
+	c.channel.Close()
 }
 
 // ConnectToChannel connects to a channel
 func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings) (Queue, error) {
-	nativeQueue, err := c.channel.QueueDeclare(
+	if c.channel == nil || c.channel.closed {
+		err := c.createChannel()
+
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	nativeQueue, err := c.channel.channel.QueueDeclare(
 		queueSettings.QueueName,
 		queueSettings.Durable,
 		queueSettings.DeleteWhenUnused,

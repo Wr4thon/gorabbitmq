@@ -11,7 +11,12 @@ type Queue interface {
 	SendPlainString(body string) error
 	Send(body interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
+	// registeres a consumer
+	// reads items from the queue and passes them in the provided callback.
+	// WIP this is a blocking call (this will propably change in the future)
 	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	// closes the virtual connection (channel) but not the real connection (tcp)
+	// you need to get e new Queue connection once this method is called
 	Close()
 }
 
@@ -29,7 +34,7 @@ type ConsumerSettings struct {
 type queue struct {
 	Queue
 	queueSettings QueueSettings
-	channel       *amqp.Channel
+	channel       *channel
 	queue         amqp.Queue
 }
 
@@ -55,17 +60,11 @@ func (c *queue) Send(body interface{}) error {
 }
 
 func (c *queue) sendInternal(publishing amqp.Publishing) error {
-	return c.channel.Publish(
-		"",
-		c.queueSettings.QueueName,
-		false,
-		false,
-		publishing,
-	)
+	return c.channel.Publish("", c.queueSettings.QueueName, false, false, publishing)
 }
 
 func (c *queue) Close() {
-	c.channel.Close()
+	c.channel.close()
 }
 
 func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error) {
