@@ -2,6 +2,7 @@ package gorabbitmq
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -30,11 +31,11 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 	var sb strings.Builder
 
 	sb.WriteString("amqp://")
-	sb.WriteString(queueSettings.UserName)
+	sb.WriteString(url.QueryEscape(queueSettings.UserName))
 	sb.WriteString(":")
-	sb.WriteString(queueSettings.Password)
+	sb.WriteString(url.QueryEscape(queueSettings.Password))
 	sb.WriteString("@")
-	sb.WriteString(queueSettings.Host)
+	sb.WriteString(url.QueryEscape(queueSettings.Host))
 	sb.WriteString(":")
 	sb.WriteString(strconv.Itoa(queueSettings.Port))
 	sb.WriteString("/")
