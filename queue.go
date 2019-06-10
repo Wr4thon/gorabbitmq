@@ -64,6 +64,9 @@ func (c *queue) sendInternal(publishing amqp.Publishing) error {
 }
 
 func (c *queue) Close() {
+	if c.channel.closed {
+		return
+	}
 	c.channel.close()
 }
 
