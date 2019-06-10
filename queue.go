@@ -23,9 +23,11 @@ type Queue interface {
 }
 
 type (
+	// DeliveryConsumer can be registered as consumer
 	DeliveryConsumer func(amqp.Delivery) error
 )
 
+// ConsumerSettings are uses as settings for amqp
 type ConsumerSettings struct {
 	AutoAck   bool
 	Exclusive bool

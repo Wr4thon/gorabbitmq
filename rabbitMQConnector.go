@@ -57,7 +57,10 @@ func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 		connection: conn,
 	}
 
-	connector.createChannel()
+	err = connector.createChannel()
+	if err != nil {
+		return nil, err
+	}
 
 	return connector, err
 }
@@ -82,9 +85,9 @@ func (c *queueConnector) createChannel() error {
 
 	channelErrorChannel := make(chan *amqp.Error)
 
-	if c.channel != nil && !c.channel.closed {
-		close(c.channel.channelErrorChannel)
-	}
+	// if c.channel != nil && !c.channel.closed {
+	// 	close(c.channel.channelErrorChannel)
+	// }
 
 	c.channel = &channel{
 		channel:             ch,
