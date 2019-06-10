@@ -18,6 +18,8 @@ type Queue interface {
 	// closes the virtual connection (channel) but not the real connection (tcp)
 	// you need to get e new Queue connection once this method is called
 	Close()
+	// Returns wether the channel is closed
+	IsClosed() bool
 }
 
 type (
@@ -68,6 +70,10 @@ func (c *queue) Close() {
 		return
 	}
 	c.channel.close()
+}
+
+func (c *queue) IsClosed() bool {
+	return c.channel.closed
 }
 
 func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error) {
