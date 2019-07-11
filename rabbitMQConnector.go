@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	"github.com/streadway/amqp"
 )
 
@@ -17,12 +18,12 @@ type QueueConnector interface {
 
 type queueConnector struct {
 	QueueConnector
-	connection *amqp.Connection
+	connection *rabbitmq.Connection
 	channel    *channel
 }
 
 type channel struct {
-	channel             *amqp.Channel
+	channel             *rabbitmq.Channel
 	channelErrorChannel chan *amqp.Error
 	closed              bool
 }
@@ -47,7 +48,7 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 	connectionString := getConnectionString(settings)
 
-	conn, err := amqp.Dial(connectionString)
+	conn, err := rabbitmq.Dial(connectionString)
 
 	if err != nil {
 		return nil, err
@@ -122,6 +123,8 @@ func (c *channel) close() {
 
 // ConnectToChannel connects to a channel
 func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings) (Queue, error) {
+	rabbitmq.Debug = true
+
 	if c.channel == nil || c.channel.closed {
 		err := c.createChannel()
 
