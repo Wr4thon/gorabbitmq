@@ -11,6 +11,7 @@ import (
 type Queue interface {
 	SendPlainString(body string) error
 	Send(body interface{}) error
+	SendWithTable(body interface{}, table map[string]interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
 	// registeres a consumer
 	// reads items from the queue and passes them in the provided callback.
@@ -52,6 +53,10 @@ func (c *queue) SendPlainText(body string) error {
 }
 
 func (c *queue) Send(body interface{}) error {
+	return c.SendWithTable(body, nil)
+}
+
+func (c *queue) SendWithTable(body interface{}, table map[string]interface{}) error {
 	message, err := json.Marshal(&body)
 
 	if err != nil {
@@ -61,6 +66,7 @@ func (c *queue) Send(body interface{}) error {
 	return c.sendInternal(amqp.Publishing{
 		ContentType: "application/json",
 		Body:        message,
+		Headers:     table,
 	})
 }
 
