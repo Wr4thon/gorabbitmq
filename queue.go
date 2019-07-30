@@ -2,6 +2,7 @@ package gorabbitmq
 
 import (
 	"encoding/json"
+	"log"
 
 	"github.com/streadway/amqp"
 )
@@ -89,7 +90,10 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 	}
 
 	for item := range channel {
-		deliveryConsumer(item)
+		err := deliveryConsumer(item)
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
 	return nil

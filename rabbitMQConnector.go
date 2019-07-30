@@ -2,6 +2,7 @@ package gorabbitmq
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -73,7 +74,10 @@ func (c *queueConnector) watchChannelConnection() {
 		}
 
 		fmt.Println(elem)
-		c.createChannel()
+		err := c.createChannel()
+		if err != nil {
+			log.Println(err)
+		}
 	}
 }
 
