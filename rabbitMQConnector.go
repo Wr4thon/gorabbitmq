@@ -15,6 +15,7 @@ import (
 // can be used to connect to a queue
 type QueueConnector interface {
 	ConnectToQueue(settings QueueSettings) (Queue, error)
+	GetHealth() error
 }
 
 type queueConnector struct {
@@ -65,6 +66,14 @@ func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 	}
 
 	return connector, err
+}
+
+func (c *queueConnector) GetHealth() error {
+	if c.connection.IsClosed() {
+		return fmt.Errorf("connection closed")
+	}
+
+	return nil
 }
 
 func (c *queueConnector) watchChannelConnection() {
