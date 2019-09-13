@@ -111,14 +111,13 @@ func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer
 	if err != nil {
 		return err
 	}
-	for item := range channel {
-		err = deliveryConsumer(item)
-		if err != nil {
-			log.Println(err)
-		}
-		c.Close()
-		break
+
+	item := <-channel
+	err = deliveryConsumer(item)
+	if err != nil {
+		log.Println(err)
 	}
+	c.Close()
 
 	return nil
 }
