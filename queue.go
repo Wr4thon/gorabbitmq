@@ -14,6 +14,7 @@ type Queue interface {
 	SendWithTable(body interface{}, table map[string]interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
 	ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	GetMessagesCount() int
 	// registeres a consumer
 	// reads items from the queue and passes them in the provided callback.
 	// WIP this is a blocking call (this will propably change in the future)
