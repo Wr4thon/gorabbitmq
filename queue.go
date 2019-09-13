@@ -13,6 +13,8 @@ type Queue interface {
 	Send(body interface{}) error
 	SendWithTable(body interface{}, table map[string]interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
+	ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	GetMessagesCount() int
 	// registeres a consumer
 	// reads items from the queue and passes them in the provided callback.
 	// WIP this is a blocking call (this will propably change in the future)
@@ -103,4 +105,24 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 	}
 
 	return nil
+}
+
+func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	if err != nil {
+		return err
+	}
+
+	item := <-channel
+	err = deliveryConsumer(item)
+	if err != nil {
+		log.Println(err)
+	}
+	c.Close()
+
+	return nil
+}
+
+func (c *queue) GetMessagesCount() int {
+	return c.queue.Messages
 }
