@@ -121,3 +121,7 @@ func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer
 
 	return nil
 }
+
+func (c *queue) GetMessagesCount() int {
+	return c.queue.Messages
+}
