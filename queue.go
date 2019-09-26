@@ -17,8 +17,8 @@ type Queue interface {
 	GetMessagesCount() int
 	// registeres a consumer
 	// reads items from the queue and passes them in the provided callback.
-	// WIP this is a blocking call (this will propably change in the future)
 	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
 	// closes the virtual connection (channel) but not the real connection (tcp)
 	// you need to get e new Queue connection once this method is called
 	Close()
@@ -103,6 +103,24 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 			log.Println(err)
 		}
 	}
+
+	return nil
+}
+
+func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for item := range channel {
+			err := deliveryConsumer(item)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}()
 
 	return nil
 }
