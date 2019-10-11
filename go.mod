@@ -1,6 +1,6 @@
-module github.com/Wr4thon/gorabbitmq
+module github.com/fino-digital/gorabbitmq
 
-go 1.12
+go 1.13
 
 require (
 	github.com/isayme/go-amqp-reconnect v0.0.0-20180930040740-e71660afb5ca
