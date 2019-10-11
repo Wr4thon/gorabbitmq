@@ -104,6 +104,17 @@ func (c *queueConnector) createChannel() error {
 		return err
 	}
 
+	err = ch.Qos(10, 0, false)
+	if err != nil {
+		return err
+	}
+
+	c.channel = &channel{
+		channel:             ch,
+		channelErrorChannel: channelErrorChannel,
+		closed:              false,
+	}
+
 	go c.watchChannelConnection()
 	go c.watchChannelClosed()
 
