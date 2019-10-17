@@ -104,7 +104,7 @@ func (c *queueConnector) createChannel() error {
 		return err
 	}
 
-	err = ch.Qos(10, 0, false)
+	err = ch.Qos(1, 0, false)
 	if err != nil {
 		return err
 	}
