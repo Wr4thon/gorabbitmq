@@ -1,8 +1,10 @@
 # WIP
 
-please don't use this yet, as I have to change some things around. Naming is still not final and will change in the future.
+Please don't use this yet, as I have to change some things around. Naming is still not final and will change in the future.
 
-This Lib is a wrapper around the Go RabbitMQ Client Library. https://github.com/streadway/amqp
+## INFO
+
+This libary is a wrapper around the Go RabbitMQ Client Library. https://github.com/streadway/amqp
 
 Supported Go Versions
 
@@ -16,7 +18,7 @@ go get github.com/Wr4thon/gorabbitmq
 
 ## USAGE
 
-### Initialisation:
+### Initialization:
 
 ```Go
 connectionSettings := gorabbitmq.ConnectionSettings{
@@ -53,19 +55,21 @@ return q, nil
 ### Enqeue:
 
 ```Go
-err := q.Send(queueRequest)
+err := q.Send(queueLoad)
 if err != nil {
-	return errors.Wrap(err, "could not publish article")
+	return errors.Wrap(err, "could not publish queue load")
 }
 return nil
 ```
 
 ### Consume:
 
+Replace the foo function with the function you want to use to handle the body you received from the queue.
+
 ```Go
 consumerSettings := gorabbitmq.ConsumerSettings{AutoAck: false, Exclusive: false, NoLocal: false, NoWait: false}
 
-var request models.Request
+var queueLoad models.queueLoad
 fn := func(delivery amqp.Delivery) error {
 	if service.stopConsuming {
 		err := delivery.Nack(false, true)
@@ -79,18 +83,18 @@ fn := func(delivery amqp.Delivery) error {
 		return errors.New("queue channel was closed")
 	}
 
-	err := json.Unmarshal(delivery.Body, &request)
+	err := json.Unmarshal(delivery.Body, &queueLoad)
 	if err != nil {
 		nackErr := delivery.Nack(false, false)
 		if nackErr != nil {
-			return errors.Wrap(err, "could not Nack while unmarshall error")
+			return errors.Wrap(err, "could not Nack while unmarshal error")
 		}
 
 
-		return errors.Wrap(err, "could not unmarshal queue request")
+		return errors.Wrap(err, "could not unmarshal queueLoad")
 	}
 
-	err = foo(request) // METHOD TO HANDLE REQUEST 
+	err = foo(queueLoad) // METHOD TO HANDLE REQUEST 
 	if err != nil {
 
 		ackErr := delivery.Ack(false)
@@ -129,3 +133,4 @@ if err != nil {
 ## External packages
 
 Go RabbitMQ Client Library https://github.com/streadway/amqp
+github.com/isayme/go-amqp-reconnect
