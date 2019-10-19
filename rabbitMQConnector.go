@@ -109,12 +109,6 @@ func (c *queueConnector) createChannel() error {
 		return err
 	}
 
-	c.channel = &channel{
-		channel:             ch,
-		channelErrorChannel: channelErrorChannel,
-		closed:              false,
-	}
-
 	go c.watchChannelConnection()
 	go c.watchChannelClosed()
 
@@ -122,6 +116,7 @@ func (c *queueConnector) createChannel() error {
 
 	return nil
 }
+
 
 func (c *channel) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
 	return c.channel.Publish(exchange, key, mandatory, immediate, msg)
