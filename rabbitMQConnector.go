@@ -21,7 +21,7 @@ type queueConnector struct {
 	QueueConnector
 	connection      *rabbitmq.Connection
 	channel         *channel
-	channelSettings channelSettings
+	channelSettings ChannelSettings
 }
 
 type channel struct {
@@ -30,8 +30,9 @@ type channel struct {
 	closed              bool
 }
 
-type channelSettings struct {
-	usePrefetch   bool //default false
+// ChannelSettings ...
+type ChannelSettings struct {
+	usePrefetch   bool // default false
 	prefetchCount int
 }
 
@@ -52,7 +53,7 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 }
 
 // NewConnection returns a new Instance of a tcp Connection to a RabbitMQ Server
-func NewConnection(settings ConnectionSettings, channelSettings channelSettings) (QueueConnector, error) {
+func NewConnection(settings ConnectionSettings, channelSettings ChannelSettings) (QueueConnector, error) {
 	connectionString := getConnectionString(settings)
 
 	conn, err := rabbitmq.Dial(connectionString)
@@ -62,7 +63,7 @@ func NewConnection(settings ConnectionSettings, channelSettings channelSettings)
 	}
 
 	connector := &queueConnector{
-		connection: conn,
+		connection:      conn,
 		channelSettings: channelSettings,
 	}
 
