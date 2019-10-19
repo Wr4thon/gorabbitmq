@@ -1,4 +1,4 @@
-module github.com/Wr4thon/gorabbitmq
+module github.com/fino-digital/gorabbitmq
 
 go 1.13
 
