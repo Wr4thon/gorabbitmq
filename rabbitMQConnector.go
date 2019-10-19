@@ -19,14 +19,20 @@ type QueueConnector interface {
 
 type queueConnector struct {
 	QueueConnector
-	connection *rabbitmq.Connection
-	channel    *channel
+	connection      *rabbitmq.Connection
+	channel         *channel
+	channelSettings channelSettings
 }
 
 type channel struct {
 	channel             *rabbitmq.Channel
 	channelErrorChannel chan *amqp.Error
 	closed              bool
+}
+
+type channelSettings struct {
+	usePrefetch   bool //default false
+	prefetchCount int
 }
 
 func getConnectionString(queueSettings ConnectionSettings) string {
@@ -46,7 +52,7 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 }
 
 // NewConnection returns a new Instance of a tcp Connection to a RabbitMQ Server
-func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
+func NewConnection(settings ConnectionSettings, channelSettings channelSettings) (QueueConnector, error) {
 	connectionString := getConnectionString(settings)
 
 	conn, err := rabbitmq.Dial(connectionString)
@@ -57,6 +63,7 @@ func NewConnection(settings ConnectionSettings) (QueueConnector, error) {
 
 	connector := &queueConnector{
 		connection: conn,
+		channelSettings: channelSettings,
 	}
 
 	err = connector.createChannel()
@@ -102,6 +109,13 @@ func (c *queueConnector) createChannel() error {
 
 	if err != nil {
 		return err
+	}
+
+	if c.channelSettings.usePrefetch {
+		err = ch.Qos(c.channelSettings.prefetchCount, 0, false)
+		if err != nil {
+			return err
+		}
 	}
 
 	go c.watchChannelConnection()
