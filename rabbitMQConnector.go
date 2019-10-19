@@ -30,6 +30,7 @@ type channel struct {
 	closed              bool
 }
 
+// ChannelSettings ...
 type ChannelSettings struct {
 	usePrefetch   bool // default false
 	prefetchCount int
