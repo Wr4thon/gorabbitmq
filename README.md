@@ -10,7 +10,7 @@ Supported Go Versions
 
 This library supports two most recent Go, currently 1.13
 
-## INSTALL 
+## INSTALL
 
 ```bash
 go get github.com/Wr4thon/gorabbitmq
@@ -18,18 +18,18 @@ go get github.com/Wr4thon/gorabbitmq
 
 ## USAGE
 
-### Initialization:
+### Initialization
 
 ```Go
 connectionSettings := gorabbitmq.ConnectionSettings{
-		UserName: rabbitMQUser,
-		Password: rabbitMQPassword,
-		Host:     rabbitMQHost,
-		Port:     port,
+    UserName: rabbitMQUser,
+    Password: rabbitMQPassword,
+    Host:     rabbitMQHost,
+    Port:     port,
 }
 channelSettings := gorabbitmq.channelSettings{
-	usePrefetch:   false
-	prefetchCount: 1
+    usePrefetch:   false
+    prefetchCount: 1
 }
 
 qConnector, err := gorabbitmq.NewConnection(connectionSettings,channelSettings)
@@ -52,17 +52,17 @@ if err != nil {
 return q, nil
 ```
 
-### Enqeue:
+### Enqeue
 
 ```Go
 err := q.Send(queueLoad)
 if err != nil {
-	return errors.Wrap(err, "could not publish queue load")
+    return errors.Wrap(err, "could not publish queue load")
 }
 return nil
 ```
 
-### Consume:
+### Consume
 
 Replace the foo function with the function you want to use to handle the body you received from the queue.
 
@@ -114,24 +114,23 @@ fn := func(delivery amqp.Delivery) error {
 deliveryConsumer := gorabbitmq.DeliveryConsumer(fn)
 
 if service.queue == nil {
-	log.Error(errors.Wrap(errors.New("could not consume closed queue"), ""))
-	return
+    log.Error(errors.Wrap(errors.New("could not consume closed queue"), ""))
+    return
 }
 
 if service.queue.IsClosed() {
-	log.Error(errors.Wrap(errors.New("queue channel was closed"), ""))
-	return
+    log.Error(errors.Wrap(errors.New("queue channel was closed"), ""))
+    return
 }
 
 err := service.queue.RegisterConsumer(consumerSettings, deliveryConsumer)
 if err != nil {
-	log.Error(errors.Wrap(err, "could not read items from the queue"))
+    log.Error(errors.Wrap(err, "could not read items from the queue"))
 }
 ```
 
-
 ## External packages
 
-Go RabbitMQ Client Library https://github.com/streadway/amqp
-github.com/isayme/go-amqp-reconnect
+[Go RabbitMQ Client Library](https://github.com/streadway/amqp)
 
+github.com/isayme/go-amqp-reconnect
