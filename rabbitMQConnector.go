@@ -32,8 +32,8 @@ type channel struct {
 
 // ChannelSettings ...
 type ChannelSettings struct {
-	usePrefetch   bool // default false
-	prefetchCount int
+	UsePrefetch   bool // default false
+	PrefetchCount int
 }
 
 func getConnectionString(queueSettings ConnectionSettings) string {
@@ -112,8 +112,8 @@ func (c *queueConnector) createChannel() error {
 		return err
 	}
 
-	if c.channelSettings.usePrefetch {
-		err = ch.Qos(c.channelSettings.prefetchCount, 0, false)
+	if c.channelSettings.UsePrefetch {
+		err = ch.Qos(c.channelSettings.PrefetchCount, 0, false)
 		if err != nil {
 			return err
 		}
