@@ -134,3 +134,4 @@ if err != nil {
 
 Go RabbitMQ Client Library https://github.com/streadway/amqp
 github.com/isayme/go-amqp-reconnect
+
