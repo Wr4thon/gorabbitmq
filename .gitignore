@@ -48,3 +48,6 @@
 
 # End of https://www.gitignore.io/api/go,visualstudiocode,linux
 .vscode
+
+### kdiff 3 ###
+*.orig
