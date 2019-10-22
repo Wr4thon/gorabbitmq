@@ -1,7 +1,3 @@
-# WIP
-
-Please don't use this yet, as I have to change some things around. Naming is still not final and will change in the future.
-
 ## INFO
 
 This libary is a wrapper around the Go RabbitMQ Client Library. https://github.com/streadway/amqp
