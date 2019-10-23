@@ -42,7 +42,7 @@ type ConsumerSettings struct {
 type queue struct {
 	Queue
 	queueSettings QueueSettings
-	channel       *channel
+	channel       *amqp.Channel
 	queue         amqp.Queue
 }
 
@@ -74,17 +74,6 @@ func (c *queue) SendWithTable(body interface{}, table map[string]interface{}) er
 
 func (c *queue) sendInternal(publishing amqp.Publishing) error {
 	return c.channel.Publish("", c.queueSettings.QueueName, false, false, publishing)
-}
-
-func (c *queue) Close() {
-	if c.channel.closed {
-		return
-	}
-	c.channel.close()
-}
-
-func (c *queue) IsClosed() bool {
-	return c.channel.closed
 }
 
 func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error) {
