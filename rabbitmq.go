@@ -84,12 +84,12 @@ func (s *service) CheckHealth() (err error) {
 		log.Error(prefix, err)
 		return err
 	}
-	_, err := s.internalChan.QueueDeclare("healthCheck", false, false, false, false, nil)
+	_, err = s.internalChan.QueueDeclare("healthCheck", false, false, false, false, nil)
 	if err != nil {
 		log.Error(prefix, err)
 	}
 
-	err = s.internalChan.ExchangeDeclarePassive("amqp.direct", false, false, false, false, nil)
+	err = s.internalChan.ExchangeDeclarePassive("amqp.direct", "direct", false, false, false, false, nil)
 	if err != nil {
 		log.Error(prefix, err)
 		return err
