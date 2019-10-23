@@ -84,12 +84,17 @@ func (s *service) CheckHealth() (err error) {
 		log.Error(prefix, err)
 		return err
 	}
-	if err = s.internalChan.ExchangeDeclarePassive("", "direct", true, false, false, false, nil); err != nil {
+	_, err := s.internalChan.QueueDeclare("healthCheck", false, false, false, false, nil)
+	if err != nil {
+		log.Error(prefix, err)
+	}
+
+	err = s.internalChan.ExchangeDeclarePassive("amqp.direct", false, false, false, false, nil)
+	if err != nil {
 		log.Error(prefix, err)
 		return err
 	}
-
-	return nil
+	return err
 }
 
 func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error {
