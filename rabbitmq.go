@@ -24,13 +24,11 @@ type RabbitMQ interface {
 }
 
 type service struct {
-	uri          string
-	internalChan *amqp.Channel
-	conn         *amqp.Connection
-	isHealthy    *abool.AtomicBool
-	isBlocked    *abool.AtomicBool
-	reconnecting *abool.AtomicBool
+	uri  string
+	conn *amqp.Connection
 	*sync.Mutex
+	publishChan         *amqp.Channel
+	publishStop         chan bool
 	ConsumerMap         map[string]*consumerConfig
 	connlistenerStop    chan bool
 	blockedlistenerStop chan bool
@@ -53,8 +51,6 @@ type channelWrapper struct {
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		isHealthy:   abool.New(),
-		isBlocked:   abool.New(),
 		Mutex:       &sync.Mutex{},
 		ConsumerMap: map[string]*consumerConfig{},
 	}
@@ -74,72 +70,95 @@ func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 		return &rabbitMQ, err
 	}
 	rabbitMQ.connlistenerStop = make(chan bool)
-	//rabbitMQ.blockedlistenerStop = make(chan bool)
 	go rabbitMQ.connClosedListener(rabbitMQ.connlistenerStop)
-	//go rabbitMQ.connBlockedListener(rabbitMQ.blockedlistenerStop)
+	//go rabbitMQ.connBlockedListener(rabbitMQ.blockedlistenerStop) not needed for now
 
 	return &rabbitMQ, nil
 }
 
-// CheckHealth checks rabbitmq connection health
+// checks rabbitmq connection health
 func (s *service) CheckHealth() (err error) {
 	prefix := "rabbitmq healthcheck failed: "
 	defer func() {
 		if err != nil {
 			locallog.Info(prefix, " unhealthy")
-			s.isHealthy.UnSet()
-		} else {
-			s.isHealthy.Set()
 		}
 	}()
 	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-
 	if s.conn == nil || s.conn.IsClosed() {
 		err = errors.New("rabbitmq connection is closed")
 		log.Error(prefix, err)
+		s.Mutex.Unlock()
 		return err
 	}
-	_, err = s.internalChan.QueueDeclare("healthCheck", false, false, false, false, nil)
-	if err != nil {
-		//log.Error(prefix, err)
-		s.internalChan, err = s.conn.Channel()
-		if err != nil {
-			log.Error(prefix, err)
-			return err
-		}
+	s.Mutex.Unlock()
+
+	channel, err := s.createChannel()
+	if channel != nil {
+		_ = channel.Close()
 	}
 	return err
 }
 
+func (s *service) createChannel() (*amqp.Channel, error) {
+	if s.conn == nil || s.conn.IsClosed() {
+		err := errors.New(prefix + "no connection available")
+		log.Error(prefix, err)
+		return nil, err
+	}
+	channel, err := s.conn.Channel()
+	if err != nil {
+		log.Error(prefix, err)
+	}
+	return channel, err
+}
+
+func (s *service) cleanUpChannel(channel *amqp.Channel) {
+	if channel != nil {
+		_ = channel.Close()
+	}
+}
+
 func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	return s.internalChan.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
+	channel, err := s.createChannel()
+	if err != nil {
+		return err
+	}
+	defer s.cleanUpChannel(channel)
+	return channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
 }
 
 func (s *service) ExchangeBind(destination, key, source string, noWait bool, args amqp.Table) error {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	return s.internalChan.ExchangeBind(destination, key, source, noWait, args)
+	channel, err := s.createChannel()
+	if err != nil {
+		return err
+	}
+	defer s.cleanUpChannel(channel)
+	return channel.ExchangeBind(destination, key, source, noWait, args)
 }
 
 func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	return s.internalChan.QueueBind(name, key, exchange, noWait, args)
+	channel, err := s.createChannel()
+	if err != nil {
+		return err
+	}
+	defer s.cleanUpChannel(channel)
+	return channel.QueueBind(name, key, exchange, noWait, args)
 }
 
 func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	return s.internalChan.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
+	channel, err := s.createChannel()
+	if err != nil {
+		return amqp.Queue{}, err
+	}
+	defer s.cleanUpChannel(channel)
+	return channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
 }
 
 func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-	err := s.internalChan.Publish(exchange, key, mandatory, immediate, msg)
+	err := s.publishChan.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
 		log.Error(prefix, err)
 		return err
@@ -191,7 +210,7 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 	} else {
 		return
 	}
-	go s.channelClosedListener(config)
+	go s.consumerClosedListener(config)
 	go runConsumerWorker(config)
 }
 
@@ -213,7 +232,6 @@ func runConsumerWorker(config *consumerConfig) {
 					return
 				}
 				//route message through
-				locallog.Infof(prefix+"routing message: %+v\n", delivery)
 				*config.externalDelivery <- delivery
 			}
 		case stop, isOpen := <-*config.stopWorkerChan:
@@ -234,18 +252,21 @@ func runConsumerWorker(config *consumerConfig) {
 func (s *service) connect() error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-
 	var err error
 	s.conn, err = amqp.Dial(s.uri)
 	if err != nil {
 		log.Error(err)
 		return err
 	}
-	s.internalChan, err = s.conn.Channel()
+	s.publishChan, err = s.conn.Channel()
 	if err != nil {
 		log.Error(err)
 		return err
 	}
+	if s.publishStop == nil {
+		s.publishStop = make(chan bool)
+	}
+	go s.channelClosedListener(s.publishChan, s.publishStop)
 	for _, config := range s.ConsumerMap {
 		locallog.Info(prefix, " sending stop comand to ")
 		if config.Running.IsSet() {
@@ -255,10 +276,8 @@ func (s *service) connect() error {
 		}
 		locallog.Info(prefix, " restarting consumer")
 		s.connectConsumerWorker(config)
-		//deliveries, err := s.Consume(queueName, config.consumer, config.autoAck, config.exclusive, config.noLocal, config.noWait, config.args)
 	}
 	log.Info(prefix, " rabbitmq service is connected!")
-	s.isHealthy.Set()
 	return nil
 }
 
@@ -266,15 +285,11 @@ func (s *service) Reconnect() error {
 	return s.connect()
 }
 
-func (s *service) reconnectConsumer(config *consumerConfig) {
-
-}
-
 func (s *service) Close() error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-	if s.internalChan != nil {
-		err := s.internalChan.Close()
+	if s.publishChan != nil {
+		err := s.publishChan.Close()
 		if err != nil {
 			return err
 		}
@@ -346,10 +361,8 @@ func (s *service) connBlockedListener(stop chan bool) {
 			{
 				//block is active
 				if connBlocked.Active {
-					s.isBlocked.Set()
 					log.Info("rabbitmq connection is blocked - too much load or ram usage on rabbitmq")
 				} else {
-					s.isBlocked.UnSet()
 					log.Info("rabbitmq connection is unblocked")
 
 				}
@@ -366,10 +379,45 @@ func (s *service) connBlockedListener(stop chan bool) {
 			}
 		}
 	}
-
 }
 
-func (s *service) channelClosedListener(config *consumerConfig) {
+func (s *service) channelClosedListener(channel *amqp.Channel, quit chan bool) {
+	ch := make(chan *amqp.Error)
+	channel.NotifyClose(ch)
+	defer func() {
+		s.Mutex.Lock()
+		defer s.Mutex.Unlock()
+		s.publishChan = nil
+	}()
+	for {
+		select {
+		case err, open := <-ch:
+			{
+				//block is active
+				if err != nil {
+					log.Info("rabbitmq channel disconnected")
+					return
+				}
+				if !open {
+					log.Info("rabbitmq channel disconnected")
+					return
+				}
+			}
+		case stop, isOpen := <-quit:
+			{
+				if !isOpen {
+					log.Info(prefix, " rabbitmq blockedlistener stop channel was closed locally")
+				}
+				if stop {
+					log.Info(prefix, " rabbitmq blockedlistener stop command received")
+				}
+				return
+			}
+		}
+	}
+}
+
+func (s *service) consumerClosedListener(config *consumerConfig) {
 	ch := make(chan *amqp.Error)
 	config.queueChan.NotifyClose(ch)
 	graceful := false
