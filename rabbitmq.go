@@ -1,17 +1,13 @@
 package gorabbitmq
 
 import (
-	"context"
 	"errors"
 	"github.com/labstack/gommon/log"
+	locallog "github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
 	"github.com/tevino/abool"
 	"sync"
-	"time"
 )
-
-type ConsumerHook func(context.Context) error
-type ReconnectPolicy func(retry int) time.Duration
 
 const prefix = "rabbitmq-lib "
 
@@ -23,7 +19,6 @@ type RabbitMQ interface {
 	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
 	ExchangeBind(destination, key, source string, noWait bool, args amqp.Table) error
 	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
-	ConnectToQueue(queueSettings QueueSettings) (Queue, error)
 }
 
 type service struct {
@@ -34,20 +29,28 @@ type service struct {
 	isBlocked    *abool.AtomicBool
 	reconnecting *abool.AtomicBool
 	*sync.Mutex
-	channelMap sync.Map
+	ConsumerMap map[string]*consumerConfig
 }
 
-type channel struct {
-	channel *amqp.Channel
-	queue
+type consumerConfig struct {
+	queue, consumer                     string
+	autoAck, exclusive, noLocal, noWait bool
+	args                                amqp.Table
+	channelWrapper
+}
+
+type channelWrapper struct {
+	originalDelivery *<-chan amqp.Delivery
+	externalDelivery *chan amqp.Delivery
+	queueChan        *amqp.Channel
+	stopWorkerChan   *chan bool
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		isHealthy:  abool.New(),
-		isBlocked:  abool.New(),
-		Mutex:      &sync.Mutex{},
-		channelMap: sync.Map{},
+		isHealthy: abool.New(),
+		isBlocked: abool.New(),
+		Mutex:     &sync.Mutex{},
 	}
 
 	uri := amqp.URI{
@@ -87,13 +90,9 @@ func (s *service) CheckHealth() (err error) {
 	_, err = s.internalChan.QueueDeclare("healthCheck", false, false, false, false, nil)
 	if err != nil {
 		log.Error(prefix, err)
-	}
-
-	err = s.internalChan.ExchangeDeclarePassive("amqp.direct", "direct", false, false, false, false, nil)
-	if err != nil {
-		log.Error(prefix, err)
 		return err
 	}
+
 	return err
 }
 
@@ -109,32 +108,92 @@ func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.T
 	return s.internalChan.QueueBind(name, key, exchange, noWait, args)
 }
 
-// ConnectToChannel connects to a channel
-func (s *service) ConnectToQueue(queueSettings QueueSettings) (Queue, error) {
-	qChannel, err := s.conn.Channel()
+func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error) {
+	return s.internalChan.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
+}
+
+func (s *service) Produce(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	err := s.internalChan.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
-		log.Error(err)
-		return nil, err
+		log.Error(prefix, err)
+		return err
 	}
-	nativeQueue, err := qChannel.QueueDeclare(
-		queueSettings.QueueName,
-		queueSettings.Durable,
-		queueSettings.DeleteWhenUnused,
-		queueSettings.Exclusive,
-		queueSettings.NoWait,
-		nil,
-	)
-	if err != nil {
-		return nil, err
+	return nil
+}
+
+//create consume on rabbitmq which is valid after service reconnects
+func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
+	config := consumerConfig{
+		queue:     queue,
+		noWait:    noWait,
+		noLocal:   noLocal,
+		exclusive: exclusive,
+		autoAck:   autoAck,
+		consumer:  consumer,
+		args:      args,
 	}
 
-	queue := &queue{
-		queueSettings: queueSettings,
-		channel:       qChannel,
-		queue:         nativeQueue,
+	queueChan, err := s.conn.Channel()
+	if err != nil {
+		log.Error(prefix, err)
+		return nil, err
 	}
-	s.channelMap.Store(queue.queueSettings.QueueName, qChannel)
-	return queue, nil
+	chanDeliveries, err := queueChan.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+	if err != nil {
+		log.Error(prefix, err)
+		return nil, err
+	}
+	externalDelivery := make(chan amqp.Delivery)
+	quit := make(chan bool)
+	channelWrapper := channelWrapper{
+		originalDelivery: &chanDeliveries,
+		externalDelivery: &externalDelivery,
+		queueChan:        queueChan,
+		stopWorkerChan:   &quit,
+	}
+	config.channelWrapper = channelWrapper
+	s.Lock()
+	s.ConsumerMap[config.queue] = &config
+	s.Unlock()
+	s.channelClosedListener(&config)
+
+	go startConsumerWorker(&config)
+	return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery), err
+}
+
+//async worker with nonblocking routing of deliveries and stop channel
+func startConsumerWorker(config *consumerConfig) {
+	defer func() {
+		if err := config.queueChan.Close(); err != nil {
+			log.Error(prefix, err)
+		}
+	}()
+	for {
+		select {
+		case delivery, isOpen := <-*config.originalDelivery:
+			{
+				if !isOpen {
+					log.Info(prefix, "consume worker amqp.Delivery channel was closed by rabbitmq server")
+
+					return
+				}
+				//route message through
+				*config.externalDelivery <- delivery
+
+			}
+		case stop, isOpen := <-*config.stopWorkerChan:
+			{
+				if !isOpen {
+					log.Info(prefix, " consume worker stop channel was closed locally")
+					return
+				}
+				if stop {
+					log.Info(prefix, " consume worker stop command received")
+					return
+				}
+			}
+		}
+	}
 }
 
 func (s *service) connect() error {
@@ -151,11 +210,38 @@ func (s *service) connect() error {
 		log.Error(err)
 		return err
 	}
+	for _, config := range s.ConsumerMap {
+		locallog.Info(prefix, " sending stop comand to ")
+		*config.stopWorkerChan <- true
+		//deliveries, err := s.Consume(queueName, config.consumer, config.autoAck, config.exclusive, config.noLocal, config.noWait, config.args)
+	}
 	return err
 }
 
 func (s *service) Reconnect() error {
 	return s.connect()
+}
+
+func (s *service) reconnectConsumer(config *consumerConfig) {
+
+}
+
+func (s *service) Close() error {
+	s.Mutex.Lock()
+	defer s.Mutex.Unlock()
+	if s.internalChan != nil {
+		err := s.internalChan.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if s.conn != nil {
+		err := s.conn.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *service) connClosedListener() {
@@ -171,7 +257,7 @@ func (s *service) connClosedListener() {
 			close(ch)
 		} else {
 			graceful = true
-			log.Info("rabbitmq connection was closed gracefully")
+			log.Info("rabbitmq connection was closed gracefully: %+v\n", connClosed)
 		}
 		break
 	}
@@ -200,20 +286,22 @@ func (s *service) connBlockedListener() {
 	}
 }
 
-func (s *service) Close() error {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-	if s.internalChan != nil {
-		err := s.internalChan.Close()
-		if err != nil {
-			return err
+func (s *service) channelClosedListener(config *consumerConfig) {
+	ch := make(chan *amqp.Error)
+	config.queueChan.NotifyClose(ch)
+	graceful := false
+	for {
+		queueChanClosed, chanOpen := <-ch
+		if !chanOpen {
+			log.Errorf("rabbitmq worker channel was closed: %+v\n", queueChanClosed)
+			close(ch)
+		} else {
+			graceful = true
+			log.Info("rabbitmq worker channel was closed gracefully: %+v\n", queueChanClosed)
 		}
+		break
 	}
-	if s.conn != nil {
-		err := s.conn.Close()
-		if err != nil {
-			return err
-		}
+	if !graceful {
+		//TODO impl
 	}
-	return nil
 }
