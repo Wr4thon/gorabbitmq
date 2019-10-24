@@ -179,12 +179,11 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	}
 
 	externalDelivery := make(chan amqp.Delivery)
-	quit := make(chan bool)
 	channelWrapper := channelWrapper{
 		originalDelivery: nil,
 		externalDelivery: &externalDelivery,
 		queueChan:        nil,
-		stopWorkerChan:   &quit,
+		stopWorkerChan:   nil,
 	}
 
 	config.channelWrapper = channelWrapper
@@ -199,10 +198,12 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 	queueChan, err := s.conn.Channel()
 	if err != nil {
 		log.Error(prefix, err)
+		return
 	}
 	chanDeliveries, err := queueChan.Consume(config.queue, config.consumer, config.autoAck, config.exclusive, config.noLocal, config.noWait, config.args)
 	if err != nil {
 		log.Error(prefix, err)
+		return
 	}
 	config.channelWrapper.queueChan = queueChan
 	if chanDeliveries != nil {
@@ -210,6 +211,8 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 	} else {
 		return
 	}
+	quit := make(chan bool)
+	config.stopWorkerChan = &quit
 	go s.consumerClosedListener(config)
 	go runConsumerWorker(config)
 }
@@ -268,12 +271,11 @@ func (s *service) connect() error {
 	}
 	go s.channelClosedListener(s.publishChan, s.publishStop)
 	for _, config := range s.ConsumerMap {
-		locallog.Info(prefix, " sending stop comand to ")
 		if config.Running.IsSet() {
-			go func() {
-				*config.stopWorkerChan <- true
-			}()
+			locallog.Info(prefix, " sending stop comand to consume worker")
+			close(*config.stopWorkerChan)
 		}
+		config.Running.UnSet()
 		locallog.Info(prefix, " restarting consumer")
 		s.connectConsumerWorker(config)
 	}
