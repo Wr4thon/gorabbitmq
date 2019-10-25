@@ -19,7 +19,7 @@ type RabbitMQ interface {
 	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
 	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
-	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) <-chan amqp.Delivery
+	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery
 	Reconnect() error
 }
 
@@ -34,6 +34,7 @@ type service struct {
 }
 
 type consumerConfig struct {
+	prefetchCount, prefetchSize         int
 	queue, consumer                     string
 	autoAck, exclusive, noLocal, noWait bool
 	args                                amqp.Table
@@ -108,7 +109,9 @@ func (s *service) createChannel() (*amqp.Channel, error) {
 	channel, err := s.conn.Channel()
 	if err != nil {
 		log.Error(prefix, err)
+		return channel, err
 	}
+
 	return channel, err
 }
 
@@ -171,15 +174,17 @@ func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg a
 }
 
 //create consume on rabbitmq which is valid after service reconnects
-func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) <-chan amqp.Delivery {
+func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery {
 	config := consumerConfig{
-		queue:     queue,
-		noWait:    noWait,
-		noLocal:   noLocal,
-		exclusive: exclusive,
-		autoAck:   autoAck,
-		consumer:  consumer,
-		args:      args,
+		queue:         queue,
+		noWait:        noWait,
+		noLocal:       noLocal,
+		exclusive:     exclusive,
+		autoAck:       autoAck,
+		consumer:      consumer,
+		args:          args,
+		prefetchCount: prefetchCount,
+		prefetchSize:  prefetchSize,
 	}
 
 	externalDelivery := make(chan amqp.Delivery)
@@ -206,6 +211,11 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 
 func (s *service) connectConsumerWorker(config *consumerConfig) {
 	queueChan, err := s.conn.Channel()
+	if err != nil {
+		log.Error(prefix, err)
+		return
+	}
+	err = queueChan.Qos(config.prefetchCount, config.prefetchSize, false)
 	if err != nil {
 		log.Error(prefix, err)
 		return
@@ -288,7 +298,14 @@ func (s *service) connect() error {
 		return err
 	}
 	s.publishWrapper.channel = publishChan
-
+	err = publishChan.Qos(
+		1,     // prefetch count
+		0,     // prefetch size
+		false, // global
+	)
+	if err != nil {
+		log.Error(prefix, err)
+	}
 	if s.publishWrapper.stopWorkerChan == nil {
 		tmpChan := make(chan bool)
 		s.publishWrapper.stopWorkerChan = &tmpChan
