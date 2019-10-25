@@ -193,6 +193,12 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	config.channelWrapper = channelWrapper
 	s.Mutex.Lock()
 	s.ConsumerMap[config.queue] = &config
+	if s.conn == nil || s.conn.IsClosed() {
+		err := errors.New(prefix + "no connection available")
+		log.Error(prefix, err)
+		s.Mutex.Unlock()
+		return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
+	}
 	s.Mutex.Unlock()
 	s.connectConsumerWorker(&config)
 	return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
@@ -210,6 +216,7 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 		return
 	}
 	config.channelWrapper.channel = queueChan
+	config.channelWrapper.Connnected = abool.NewBool(false)
 	if chanDeliveries != nil {
 		config.channelWrapper.originalDelivery = &chanDeliveries
 	} else {
@@ -289,9 +296,11 @@ func (s *service) connect() error {
 
 	go s.channelClosedListener(s.publishWrapper)
 	for _, config := range s.ConsumerMap {
-		if config.Connnected.IsSet() {
+		if config.Connnected != nil || config.Connnected.IsSet() {
 			locallog.Info(prefix, " sending stop comand to consume worker")
 			close(*config.stopWorkerChan)
+		} else {
+			config.Connnected = abool.NewBool(false)
 		}
 		config.Connnected.UnSet()
 		locallog.Info(prefix, " restarting consumer")
