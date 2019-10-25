@@ -97,6 +97,18 @@ func (s *service) CheckHealth() (err error) {
 	if channel != nil {
 		_ = channel.Close()
 	}
+
+	for _, config := range s.ConsumerMap {
+		if config.Connnected != nil || config.Connnected.IsSet() {
+			locallog.Info(prefix, " sending stop comand to consume worker")
+			close(*config.stopWorkerChan)
+		} else {
+			config.Connnected = abool.NewBool(false)
+		}
+		config.Connnected.UnSet()
+		locallog.Info(prefix, " restarting consumer")
+		s.connectConsumerWorker(config)
+	}
 	return err
 }
 
