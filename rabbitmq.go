@@ -27,8 +27,7 @@ type service struct {
 	uri  string
 	conn *amqp.Connection
 	*sync.Mutex
-	publishChan         *amqp.Channel
-	publishStop         chan bool
+	publishWrapper      *channelWrapper
 	ConsumerMap         map[string]*consumerConfig
 	connlistenerStop    chan bool
 	blockedlistenerStop chan bool
@@ -44,9 +43,9 @@ type consumerConfig struct {
 type channelWrapper struct {
 	originalDelivery *<-chan amqp.Delivery
 	externalDelivery *chan amqp.Delivery
-	queueChan        *amqp.Channel
+	channel          *amqp.Channel
 	stopWorkerChan   *chan bool
-	Running          abool.AtomicBool
+	Connnected       *abool.AtomicBool
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
@@ -158,7 +157,12 @@ func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWa
 func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-	err := s.publishChan.Publish(exchange, key, mandatory, immediate, msg)
+	if s.publishWrapper == nil || !s.publishWrapper.Connnected.IsSet() {
+		err := errors.New("no connection for publish available")
+		log.Error(prefix, err)
+		return err
+	}
+	err := s.publishWrapper.channel.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
 		log.Error(prefix, err)
 		return err
@@ -182,7 +186,7 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	channelWrapper := channelWrapper{
 		originalDelivery: nil,
 		externalDelivery: &externalDelivery,
-		queueChan:        nil,
+		channel:          nil,
 		stopWorkerChan:   nil,
 	}
 
@@ -205,7 +209,7 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 		log.Error(prefix, err)
 		return
 	}
-	config.channelWrapper.queueChan = queueChan
+	config.channelWrapper.channel = queueChan
 	if chanDeliveries != nil {
 		config.channelWrapper.originalDelivery = &chanDeliveries
 	} else {
@@ -219,10 +223,10 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 
 //async worker with nonblocking routing of deliveries and stop channel
 func runConsumerWorker(config *consumerConfig) {
-	config.Running.Set()
+	config.Connnected.Set()
 	defer func() {
-		config.Running.UnSet()
-		if err := config.queueChan.Close(); err != nil {
+		config.Connnected.UnSet()
+		if err := config.channel.Close(); err != nil {
 			log.Error(prefix, err)
 		}
 	}()
@@ -261,21 +265,35 @@ func (s *service) connect() error {
 		log.Error(err)
 		return err
 	}
-	s.publishChan, err = s.conn.Channel()
+	if s.publishWrapper == nil {
+		s.publishWrapper = &channelWrapper{
+			originalDelivery: nil,
+			externalDelivery: nil,
+			channel:          nil,
+			stopWorkerChan:   nil,
+			Connnected:       abool.NewBool(false),
+		}
+	}
+
+	publishChan, err := s.conn.Channel()
 	if err != nil {
 		log.Error(err)
 		return err
 	}
-	if s.publishStop == nil {
-		s.publishStop = make(chan bool)
+	s.publishWrapper.channel = publishChan
+
+	if s.publishWrapper.stopWorkerChan == nil {
+		tmpChan := make(chan bool)
+		s.publishWrapper.stopWorkerChan = &tmpChan
 	}
-	go s.channelClosedListener(s.publishChan, s.publishStop)
+
+	go s.channelClosedListener(s.publishWrapper)
 	for _, config := range s.ConsumerMap {
-		if config.Running.IsSet() {
+		if config.Connnected.IsSet() {
 			locallog.Info(prefix, " sending stop comand to consume worker")
 			close(*config.stopWorkerChan)
 		}
-		config.Running.UnSet()
+		config.Connnected.UnSet()
 		locallog.Info(prefix, " restarting consumer")
 		s.connectConsumerWorker(config)
 	}
@@ -290,8 +308,8 @@ func (s *service) Reconnect() error {
 func (s *service) Close() error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-	if s.publishChan != nil {
-		err := s.publishChan.Close()
+	if s.publishWrapper != nil && s.publishWrapper.channel != nil {
+		err := s.publishWrapper.channel.Close()
 		if err != nil {
 			return err
 		}
@@ -308,7 +326,6 @@ func (s *service) Close() error {
 	if s.connlistenerStop != nil {
 		close(s.connlistenerStop)
 	}
-
 	return nil
 }
 
@@ -383,13 +400,15 @@ func (s *service) connBlockedListener(stop chan bool) {
 	}
 }
 
-func (s *service) channelClosedListener(channel *amqp.Channel, quit chan bool) {
+func (s *service) channelClosedListener(wrapper *channelWrapper) {
 	ch := make(chan *amqp.Error)
-	channel.NotifyClose(ch)
+	wrapper.channel.NotifyClose(ch)
+	wrapper.Connnected.Set()
 	defer func() {
 		s.Mutex.Lock()
 		defer s.Mutex.Unlock()
-		s.publishChan = nil
+		wrapper.channel = nil
+		wrapper.Connnected.UnSet()
 	}()
 	for {
 		select {
@@ -397,7 +416,7 @@ func (s *service) channelClosedListener(channel *amqp.Channel, quit chan bool) {
 			{
 				//block is active
 				if err != nil {
-					log.Info("rabbitmq channel disconnected")
+					log.Info("rabbitmq channel disconnected: ", err)
 					return
 				}
 				if !open {
@@ -405,7 +424,7 @@ func (s *service) channelClosedListener(channel *amqp.Channel, quit chan bool) {
 					return
 				}
 			}
-		case stop, isOpen := <-quit:
+		case stop, isOpen := <-*wrapper.stopWorkerChan:
 			{
 				if !isOpen {
 					log.Info(prefix, " rabbitmq blockedlistener stop channel was closed locally")
@@ -421,7 +440,7 @@ func (s *service) channelClosedListener(channel *amqp.Channel, quit chan bool) {
 
 func (s *service) consumerClosedListener(config *consumerConfig) {
 	ch := make(chan *amqp.Error)
-	config.queueChan.NotifyClose(ch)
+	config.channel.NotifyClose(ch)
 	graceful := false
 	for {
 		queueChanClosed, chanOpen := <-ch
