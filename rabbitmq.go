@@ -99,15 +99,11 @@ func (s *service) CheckHealth() (err error) {
 	}
 
 	for _, config := range s.ConsumerMap {
-		if config.Connnected != nil || config.Connnected.IsSet() {
-			locallog.Info(prefix, " sending stop comand to consume worker")
-			close(*config.stopWorkerChan)
-		} else {
+		if config.Connnected == nil || !config.Connnected.IsSet() {
+			locallog.Info("rabbitmq healthcheck restarting consumer")
 			config.Connnected = abool.NewBool(false)
+			s.connectConsumerWorker(config)
 		}
-		config.Connnected.UnSet()
-		locallog.Info(prefix, " restarting consumer")
-		s.connectConsumerWorker(config)
 	}
 	return err
 }
@@ -172,7 +168,7 @@ func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWa
 func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
-	if s.publishWrapper == nil || !s.publishWrapper.Connnected.IsSet() {
+	if s.publishWrapper == nil || s.publishWrapper.Connnected == nil || !s.publishWrapper.Connnected.IsSet() {
 		err := errors.New("no connection for publish available")
 		log.Error(prefix, err)
 		return err
@@ -205,6 +201,7 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 		externalDelivery: &externalDelivery,
 		channel:          nil,
 		stopWorkerChan:   nil,
+		Connnected:       abool.NewBool(false),
 	}
 
 	config.channelWrapper = channelWrapper
@@ -238,7 +235,6 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 		return
 	}
 	config.channelWrapper.channel = queueChan
-	config.channelWrapper.Connnected = abool.NewBool(false)
 	if chanDeliveries != nil {
 		config.channelWrapper.originalDelivery = &chanDeliveries
 	} else {
@@ -326,8 +322,6 @@ func (s *service) connect() error {
 	go s.channelClosedListener(s.publishWrapper)
 	for _, config := range s.ConsumerMap {
 		if config.Connnected != nil || config.Connnected.IsSet() {
-			locallog.Info(prefix, " sending stop comand to consume worker")
-			close(*config.stopWorkerChan)
 		} else {
 			config.Connnected = abool.NewBool(false)
 		}
