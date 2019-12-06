@@ -76,16 +76,15 @@ func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 
 // checks rabbitmq connection health
 func (s *service) CheckHealth() (err error) {
-	prefix := "rabbitmq healthcheck failed: "
+	prefix := "rabbitmq healthcheck: "
 	defer func() {
 		if err != nil {
-			locallog.Info(prefix, " unhealthy")
+			locallog.Error(prefix, " unhealthy reason=", err)
 		}
 	}()
 	s.Mutex.Lock()
 	if s.conn == nil || s.conn.IsClosed() {
 		err = errors.New("rabbitmq connection is closed")
-		locallog.Error(prefix, err)
 		s.Mutex.Unlock()
 		return err
 	}
@@ -98,7 +97,6 @@ func (s *service) CheckHealth() (err error) {
 
 	for _, config := range s.ConsumerMap {
 		if config.Connnected == nil || !config.Connnected.IsSet() {
-			locallog.Info(prefix, "healthcheck restarting consumer")
 			config.Connnected = abool.NewBool(false)
 			s.connectConsumerWorker(config)
 		}
