@@ -2,7 +2,6 @@ package gorabbitmq
 
 import (
 	"errors"
-	"github.com/labstack/gommon/log"
 	locallog "github.com/prometheus/common/log"
 	"github.com/streadway/amqp"
 	"github.com/tevino/abool"
@@ -66,12 +65,11 @@ func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 
 	rabbitMQ.uri = uri.String()
 	if err := rabbitMQ.connect(); err != nil {
-		log.Error(err)
+		locallog.Error(prefix, err)
 		return &rabbitMQ, err
 	}
 	rabbitMQ.connlistenerStop = make(chan bool)
 	go rabbitMQ.connClosedListener(rabbitMQ.connlistenerStop)
-	//go rabbitMQ.connBlockedListener(rabbitMQ.blockedlistenerStop) not needed for now
 
 	return &rabbitMQ, nil
 }
@@ -87,7 +85,7 @@ func (s *service) CheckHealth() (err error) {
 	s.Mutex.Lock()
 	if s.conn == nil || s.conn.IsClosed() {
 		err = errors.New("rabbitmq connection is closed")
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		s.Mutex.Unlock()
 		return err
 	}
@@ -100,7 +98,7 @@ func (s *service) CheckHealth() (err error) {
 
 	for _, config := range s.ConsumerMap {
 		if config.Connnected == nil || !config.Connnected.IsSet() {
-			locallog.Info("rabbitmq healthcheck restarting consumer")
+			locallog.Info(prefix, "healthcheck restarting consumer")
 			config.Connnected = abool.NewBool(false)
 			s.connectConsumerWorker(config)
 		}
@@ -111,12 +109,12 @@ func (s *service) CheckHealth() (err error) {
 func (s *service) createChannel() (*amqp.Channel, error) {
 	if s.conn == nil || s.conn.IsClosed() {
 		err := errors.New(prefix + "no connection available")
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return nil, err
 	}
 	channel, err := s.conn.Channel()
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return channel, err
 	}
 
@@ -170,12 +168,12 @@ func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg a
 	defer s.Mutex.Unlock()
 	if s.publishWrapper == nil || s.publishWrapper.Connnected == nil || !s.publishWrapper.Connnected.IsSet() {
 		err := errors.New("no connection for publish available")
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return err
 	}
 	err := s.publishWrapper.channel.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return err
 	}
 	return nil
@@ -209,7 +207,7 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	s.ConsumerMap[config.queue] = &config
 	if s.conn == nil || s.conn.IsClosed() {
 		err := errors.New(prefix + "no connection available")
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		s.Mutex.Unlock()
 		return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
 	}
@@ -221,17 +219,17 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 func (s *service) connectConsumerWorker(config *consumerConfig) {
 	queueChan, err := s.conn.Channel()
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return
 	}
 	err = queueChan.Qos(config.prefetchCount, config.prefetchSize, false)
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return
 	}
 	chanDeliveries, err := queueChan.Consume(config.queue, config.consumer, config.autoAck, config.exclusive, config.noLocal, config.noWait, config.args)
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 		return
 	}
 	config.channelWrapper.channel = queueChan
@@ -242,6 +240,7 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 	}
 	quit := make(chan bool)
 	config.stopWorkerChan = &quit
+	locallog.Infof("starting consume worker config=%+v", *config)
 	go s.consumerClosedListener(config)
 	go runConsumerWorker(config)
 }
@@ -252,7 +251,7 @@ func runConsumerWorker(config *consumerConfig) {
 	defer func() {
 		config.Connnected.UnSet()
 		if err := config.channel.Close(); err != nil {
-			log.Error(prefix, err)
+			locallog.Error(prefix, err)
 		}
 	}()
 	for {
@@ -260,7 +259,7 @@ func runConsumerWorker(config *consumerConfig) {
 		case delivery, isOpen := <-*config.originalDelivery:
 			{
 				if !isOpen {
-					log.Info(prefix, "consume worker amqp.Delivery channel was closed by rabbitmq server")
+					locallog.Info(prefix, "consume worker amqp.Delivery channel was closed by rabbitmq server")
 					return
 				}
 				//route message through
@@ -269,11 +268,11 @@ func runConsumerWorker(config *consumerConfig) {
 		case stop, isOpen := <-*config.stopWorkerChan:
 			{
 				if !isOpen {
-					log.Info(prefix, " consume worker stop channel was closed locally")
+					locallog.Info(prefix, " consume worker stop channel was closed locally")
 					return
 				}
 				if stop {
-					log.Info(prefix, " consume worker stop command received")
+					locallog.Info(prefix, " consume worker stop command received")
 					return
 				}
 			}
@@ -287,7 +286,7 @@ func (s *service) connect() error {
 	var err error
 	s.conn, err = amqp.Dial(s.uri)
 	if err != nil {
-		log.Error(err)
+		locallog.Error(prefix, err)
 		return err
 	}
 	if s.publishWrapper == nil {
@@ -302,7 +301,7 @@ func (s *service) connect() error {
 
 	publishChan, err := s.conn.Channel()
 	if err != nil {
-		log.Error(err)
+		locallog.Error(prefix, err)
 		return err
 	}
 	s.publishWrapper.channel = publishChan
@@ -312,7 +311,7 @@ func (s *service) connect() error {
 		false, // global
 	)
 	if err != nil {
-		log.Error(prefix, err)
+		locallog.Error(prefix, err)
 	}
 	if s.publishWrapper.stopWorkerChan == nil {
 		tmpChan := make(chan bool)
@@ -329,7 +328,7 @@ func (s *service) connect() error {
 		locallog.Info(prefix, " restarting consumer")
 		s.connectConsumerWorker(config)
 	}
-	log.Info(prefix, " rabbitmq service is connected!")
+	locallog.Info(prefix, " rabbitmq service is connected!")
 	return nil
 }
 
@@ -378,10 +377,10 @@ func (s *service) connClosedListener(stop chan bool) {
 		case connClosed, chanOpen := <-ch:
 			{
 				if !chanOpen {
-					log.Errorf("rabbitmq connection was closed: %+v | %p | %b\n", connClosed, &chanOpen, chanOpen)
+					locallog.Errorf("%s connection was closed: %+v | %p | %b\n", prefix, connClosed, &chanOpen, chanOpen)
 				} else {
 					graceful = true
-					log.Info("rabbitmq connection was closed gracefully: %+v\n", connClosed)
+					locallog.Info("%s connection was closed gracefully: %+v\n", prefix, connClosed)
 				}
 				return
 			}
@@ -389,10 +388,10 @@ func (s *service) connClosedListener(stop chan bool) {
 			{
 				graceful = true
 				if !isOpen {
-					log.Info(prefix, " rabbitmq connlistener stop channel was closed locally")
+					locallog.Info(prefix, " rabbitmq connlistener stop channel was closed locally")
 				}
 				if stop {
-					log.Info(prefix, " rabbitmq connlistener stop command received")
+					locallog.Info(prefix, " rabbitmq connlistener stop command received")
 				}
 				return
 			}
@@ -412,19 +411,19 @@ func (s *service) connBlockedListener(stop chan bool) {
 			{
 				//block is active
 				if connBlocked.Active {
-					log.Info("rabbitmq connection is blocked - too much load or ram usage on rabbitmq")
+					locallog.Info(prefix, "connection is blocked - too much load or ram usage on rabbitmq")
 				} else {
-					log.Info("rabbitmq connection is unblocked")
+					locallog.Info(prefix, "connection is unblocked")
 
 				}
 			}
 		case stop, isOpen := <-stop:
 			{
 				if !isOpen {
-					log.Info(prefix, " rabbitmq blockedlistener stop channel was closed locally")
+					locallog.Info(prefix, " rabbitmq blockedlistener stop channel was closed locally")
 				}
 				if stop {
-					log.Info(prefix, " rabbitmq blockedlistener stop command received")
+					locallog.Info(prefix, " rabbitmq blockedlistener stop command received")
 				}
 				return
 			}
@@ -448,21 +447,21 @@ func (s *service) channelClosedListener(wrapper *channelWrapper) {
 			{
 				//block is active
 				if err != nil {
-					log.Info("rabbitmq channel disconnected: ", err)
+					locallog.Info(prefix, "channel disconnected: ", err)
 					return
 				}
 				if !open {
-					log.Info("rabbitmq channel disconnected")
+					locallog.Info(prefix, "channel disconnected")
 					return
 				}
 			}
 		case stop, isOpen := <-*wrapper.stopWorkerChan:
 			{
 				if !isOpen {
-					log.Info(prefix, " rabbitmq blockedlistener stop channel was closed locally")
+					locallog.Info(prefix, "rabbitmq blockedlistener stop channel was closed locally")
 				}
 				if stop {
-					log.Info(prefix, " rabbitmq blockedlistener stop command received")
+					locallog.Info(prefix, "rabbitmq blockedlistener stop command received")
 				}
 				return
 			}
@@ -473,18 +472,13 @@ func (s *service) channelClosedListener(wrapper *channelWrapper) {
 func (s *service) consumerClosedListener(config *consumerConfig) {
 	ch := make(chan *amqp.Error)
 	config.channel.NotifyClose(ch)
-	graceful := false
 	for {
 		queueChanClosed, chanOpen := <-ch
 		if !chanOpen {
-			log.Errorf("rabbitmq worker channel was closed: %+v\n", queueChanClosed)
+			locallog.Errorf("%s worker channel was closed: %+v\n", prefix, queueChanClosed)
 		} else {
-			graceful = true
-			log.Info("rabbitmq worker channel was closed gracefully: %+v\n", queueChanClosed)
+			locallog.Info("%s worker channel was closed gracefully: %+v\n", prefix, queueChanClosed)
 		}
 		break
-	}
-	if !graceful {
-		//TODO impl
 	}
 }
