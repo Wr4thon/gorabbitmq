@@ -15,8 +15,10 @@ type RabbitMQ interface {
 	CheckHealth() (err error)
 	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error
 	ExchangeBind(destination, key, source string, noWait bool, args amqp.Table) error
+	ExchangeDelete(name string, ifUnused, noWait bool) error
 	QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error
 	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
+	QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int, error)
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery
 	Reconnect() error
@@ -141,6 +143,26 @@ func (s *service) ExchangeBind(destination, key, source string, noWait bool, arg
 	}
 	defer s.cleanUpChannel(channel)
 	return channel.ExchangeBind(destination, key, source, noWait, args)
+}
+
+func (s *service) ExchangeDelete(name string, ifUnused, noWait bool) error {
+	channel, err := s.createChannel()
+	if err != nil {
+		return err
+	}
+
+	defer s.cleanUpChannel(channel)
+	return channel.ExchangeDelete(name, ifUnused, noWait)
+}
+
+func (s *service) QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int, error) {
+	channel, err := s.createChannel()
+	if err != nil {
+		return -1, err
+	}
+
+	defer s.cleanUpChannel(channel)
+	return channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
 }
 
 func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error {
