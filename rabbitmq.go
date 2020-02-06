@@ -22,6 +22,7 @@ type RabbitMQ interface {
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery
 	Reconnect() error
+	CreateChannel() amqp.Channel
 }
 
 type service struct {
@@ -104,6 +105,10 @@ func (s *service) CheckHealth() (err error) {
 		}
 	}
 	return err
+}
+
+func (s *service) CreateChannel() (*amqp.Channel, error) {
+	return s.createChannel()
 }
 
 func (s *service) createChannel() (*amqp.Channel, error) {
@@ -397,10 +402,10 @@ func (s *service) connClosedListener(stop chan bool) {
 		case connClosed, chanOpen := <-ch:
 			{
 				if !chanOpen {
-					locallog.Errorf("%s connection was closed: %+v | %p | %b\n", prefix, connClosed, &chanOpen, chanOpen)
+					locallog.Errorf("%s connection was closed: %+v | %p | %t\n", prefix, connClosed, &chanOpen, chanOpen)
 				} else {
 					graceful = true
-					locallog.Info("%s connection was closed gracefully: %+v\n", prefix, connClosed)
+					locallog.Infof("%s connection was closed gracefully: %+v\n", prefix, connClosed)
 				}
 				return
 			}
@@ -497,7 +502,7 @@ func (s *service) consumerClosedListener(config *consumerConfig) {
 		if !chanOpen {
 			locallog.Errorf("%s worker channel was closed: %+v\n", prefix, queueChanClosed)
 		} else {
-			locallog.Info("%s worker channel was closed gracefully: %+v\n", prefix, queueChanClosed)
+			locallog.Infof("%s worker channel was closed gracefully: %+v\n", prefix, queueChanClosed)
 		}
 		break
 	}
