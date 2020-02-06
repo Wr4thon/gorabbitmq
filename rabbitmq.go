@@ -22,7 +22,7 @@ type RabbitMQ interface {
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
 	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery
 	Reconnect() error
-	CreateChannel() amqp.Channel
+	CreateChannel() (*amqp.Channel, error)
 }
 
 type service struct {
@@ -101,7 +101,9 @@ func (s *service) CheckHealth() (err error) {
 	for _, config := range s.ConsumerMap {
 		if config.Connnected == nil || !config.Connnected.IsSet() {
 			config.Connnected = abool.NewBool(false)
-			s.connectConsumerWorker(config)
+			if err = s.connectConsumerWorker(config); err != nil {
+				return err
+			}
 		}
 	}
 	return err
@@ -237,11 +239,11 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 		return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
 	}
 	s.Mutex.Unlock()
-	s.connectConsumerWorker(&config)
+	_ = s.connectConsumerWorker(&config)
 	return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
 }
 
-func (s *service) connectConsumerWorker(config *consumerConfig) {
+func (s *service) connectConsumerWorker(config *consumerConfig) (err error) {
 	queueChan, err := s.conn.Channel()
 	if err != nil {
 		locallog.Error(prefix, err)
@@ -268,6 +270,7 @@ func (s *service) connectConsumerWorker(config *consumerConfig) {
 	locallog.Infof("starting consume worker config=%+v", *config)
 	go s.consumerClosedListener(config)
 	go runConsumerWorker(config)
+	return nil
 }
 
 //async worker with nonblocking routing of deliveries and stop channel
@@ -351,7 +354,9 @@ func (s *service) connect() error {
 		}
 		config.Connnected.UnSet()
 		locallog.Info(prefix, " restarting consumer")
-		s.connectConsumerWorker(config)
+		if err = s.connectConsumerWorker(config); err != nil {
+			return err
+		}
 	}
 	locallog.Info(prefix, " rabbitmq service is connected!")
 	return nil
