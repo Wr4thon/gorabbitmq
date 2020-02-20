@@ -6,7 +6,6 @@ import (
 	"github.com/streadway/amqp"
 	"github.com/tevino/abool"
 	"sync"
-	"time"
 )
 
 const prefix = "rabbitmq-lib "
@@ -293,12 +292,6 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	s.Mutex.Unlock()
 	_ = s.connectConsumerWorker(&config)
 
-	go func() {
-		time.Sleep(time.Second * 10)
-		config.channel.Close()
-		time.Sleep(time.Second * 11)
-		s.conn.Close()
-	}()
 	return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
 }
 
