@@ -6,6 +6,7 @@ import (
 	"github.com/streadway/amqp"
 	"github.com/tevino/abool"
 	"sync"
+	"time"
 )
 
 const prefix = "rabbitmq-lib "
@@ -33,28 +34,20 @@ type service struct {
 	ConsumerMap         map[string]*consumerConfig
 	connlistenerStop    chan bool
 	blockedlistenerStop chan bool
-}
-
-type consumerConfig struct {
-	prefetchCount, prefetchSize         int
-	queue, consumer                     string
-	autoAck, exclusive, noLocal, noWait bool
-	args                                amqp.Table
-	channelWrapper
-}
-
-type channelWrapper struct {
-	originalDelivery *<-chan amqp.Delivery
-	externalDelivery *chan amqp.Delivery
-	channel          *amqp.Channel
-	stopWorkerChan   *chan bool
-	Connnected       *abool.AtomicBool
+	exchanges           map[string]exchangeConfig
+	queues              map[string]queueConfig
+	queueBindings       map[string]queueBindings
+	MapMutex            *sync.Mutex
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		Mutex:       &sync.Mutex{},
-		ConsumerMap: map[string]*consumerConfig{},
+		MapMutex:      &sync.Mutex{},
+		Mutex:         &sync.Mutex{},
+		ConsumerMap:   map[string]*consumerConfig{},
+		exchanges:     map[string]exchangeConfig{},
+		queues:        map[string]queueConfig{},
+		queueBindings: map[string]queueBindings{},
 	}
 
 	uri := amqp.URI{
@@ -85,6 +78,7 @@ func (s *service) CheckHealth() (err error) {
 			locallog.Error(prefix, " unhealthy reason=", err)
 		}
 	}()
+
 	s.Mutex.Lock()
 	if s.conn == nil || s.conn.IsClosed() {
 		err = errors.New("rabbitmq connection is closed")
@@ -99,9 +93,13 @@ func (s *service) CheckHealth() (err error) {
 	}
 
 	for _, config := range s.ConsumerMap {
-		if config.Connnected == nil || !config.Connnected.IsSet() {
+		if config.channel == nil {
 			config.Connnected = abool.NewBool(false)
-			if err = s.connectConsumerWorker(config); err != nil {
+			return errors.New("consumer channel is nil")
+		} else {
+			queueResult, err := config.channel.QueueInspect(config.queue)
+			if err != nil || queueResult.Name != config.queue {
+				config.Connnected = abool.NewBool(false)
 				return err
 			}
 		}
@@ -140,6 +138,20 @@ func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, intern
 		return err
 	}
 	defer s.cleanUpChannel(channel)
+
+	if _, ok := s.exchanges[name]; !ok {
+		s.MapMutex.Lock()
+		defer s.MapMutex.Unlock()
+		s.exchanges[name] = exchangeConfig{
+			name:       name,
+			kind:       kind,
+			durable:    durable,
+			autoDelete: autoDelete,
+			internal:   internal,
+			noWait:     noWait,
+			args:       args,
+		}
+	}
 	return channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
 }
 
@@ -157,8 +169,14 @@ func (s *service) ExchangeDelete(name string, ifUnused, noWait bool) error {
 	if err != nil {
 		return err
 	}
-
 	defer s.cleanUpChannel(channel)
+
+	if _, ok := s.exchanges[name]; ok {
+		s.MapMutex.Lock()
+		defer s.MapMutex.Unlock()
+		delete(s.exchanges, name)
+	}
+
 	return channel.ExchangeDelete(name, ifUnused, noWait)
 }
 
@@ -167,8 +185,17 @@ func (s *service) QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int,
 	if err != nil {
 		return -1, err
 	}
-
 	defer s.cleanUpChannel(channel)
+
+	if _, ok := s.queues[name]; ok {
+		s.MapMutex.Lock()
+		defer s.MapMutex.Unlock()
+		delete(s.queues, name)
+		_, okB := s.queueBindings[name]
+		if okB {
+			delete(s.queueBindings, name)
+		}
+	}
 	return channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
 }
 
@@ -178,6 +205,18 @@ func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.T
 		return err
 	}
 	defer s.cleanUpChannel(channel)
+
+	if _, ok := s.queueBindings[name]; !ok {
+		s.MapMutex.Lock()
+		defer s.MapMutex.Unlock()
+		s.queueBindings[name] = queueBindings{
+			args:     args,
+			noWait:   noWait,
+			name:     name,
+			key:      key,
+			exchange: exchange,
+		}
+	}
 	return channel.QueueBind(name, key, exchange, noWait, args)
 }
 
@@ -187,6 +226,19 @@ func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWa
 		return amqp.Queue{}, err
 	}
 	defer s.cleanUpChannel(channel)
+
+	if _, ok := s.queues[name]; !ok {
+		s.MapMutex.Lock()
+		defer s.MapMutex.Unlock()
+		s.queues[name] = queueConfig{
+			name:       name,
+			durable:    durable,
+			autoDelete: autoDelete,
+			exclusive:  exclusive,
+			noWait:     noWait,
+			args:       args,
+		}
+	}
 	return channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
 }
 
@@ -240,6 +292,13 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	}
 	s.Mutex.Unlock()
 	_ = s.connectConsumerWorker(&config)
+
+	go func() {
+		time.Sleep(time.Second * 10)
+		config.channel.Close()
+		time.Sleep(time.Second * 11)
+		s.conn.Close()
+	}()
 	return (<-chan amqp.Delivery)(*channelWrapper.externalDelivery)
 }
 
@@ -346,6 +405,12 @@ func (s *service) connect() error {
 		s.publishWrapper.stopWorkerChan = &tmpChan
 	}
 
+	err = s.setUpTopology()
+	if err != nil {
+		locallog.Error(prefix, err)
+		return err
+	}
+
 	go s.channelClosedListener(s.publishWrapper)
 	for _, config := range s.ConsumerMap {
 		if config.Connnected != nil || config.Connnected.IsSet() {
@@ -359,6 +424,28 @@ func (s *service) connect() error {
 		}
 	}
 	locallog.Info(prefix, " rabbitmq service is connected!")
+	return nil
+}
+
+func (s *service) setUpTopology() error {
+	for _, config := range s.exchanges {
+		err := s.ExchangeDeclare(config.name, config.kind, config.durable, config.autoDelete, config.internal, config.noWait, config.args)
+		if err != nil {
+			return err
+		}
+	}
+	for _, config := range s.queues {
+		_, err := s.QueueDeclare(config.name, config.durable, config.autoDelete, config.exclusive, config.noWait, config.args)
+		if err != nil {
+			return err
+		}
+	}
+	for _, config := range s.queueBindings {
+		err := s.QueueBind(config.name, config.key, config.exchange, config.noWait, config.args)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
