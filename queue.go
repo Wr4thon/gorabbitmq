@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/streadway/amqp"
+	"github.com/Noobygames/amqp"
 )
 
 // Queue is the main interaction interface with the RabbitMQ Server
