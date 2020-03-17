@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/Noobygames/amqp"
-	"github.com/isayme/go-amqp-reconnect/rabbitmq"
+	"github.com/Noobygames/go-amqp-reconnect/rabbitmq"
 )
 
 // QueueConnector is the tcp connection for the communication with the RabbitMQ Server
