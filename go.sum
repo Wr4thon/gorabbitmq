@@ -1,7 +1,7 @@
-github.com/Noobygames/amqp v0.3.0 h1:tRIv5Pdv2Vw8x/3sM5Y1pk6nW163LM2yJSPr5mEl4Go=
-github.com/Noobygames/amqp v0.3.0/go.mod h1:sz2T+tmb2vc4dqUlG0gYc2Mo2uF5UU6inZG9I/SD1aU=
-github.com/Noobygames/go-amqp-reconnect v0.1.0 h1:pYq6cQSOsOPRsywmlZtbetqwv0NXnJaXK4Cjr5+MlEY=
-github.com/Noobygames/go-amqp-reconnect v0.1.0/go.mod h1:jI9d8TcbM5iXgJGSwbGxoktdmdPklHKqZix0NxdeaxI=
+github.com/Noobygames/amqp v0.5.0 h1:4SJGLw9/trgo16R3ZMPlSQZM1nJgWusanSPFp4cyPHQ=
+github.com/Noobygames/amqp v0.5.0/go.mod h1:YxMJWDw+Jbwsy0rY69qEtjz0IWp8b0O7qxKPwcKc514=
+github.com/Noobygames/go-amqp-reconnect v0.2.0 h1:VDbcmuPS94q2GfuxzyeVrk2Lpn636QFQ4FKxWPA6eHg=
+github.com/Noobygames/go-amqp-reconnect v0.2.0/go.mod h1:kYfc/GuhBnhCx3G5zbgOUqC7sxNc4eJgvuSL66/Lhvg=
 github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71 h1:2MR0pKUzlP3SGgj5NYJe/zRYDwOu9ku6YHy+Iw7l5DM=
 github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71/go.mod h1:AZpEONHx3DKn8O/DFsRAY58/XVQiIPMTMB1SddzLXVw=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
