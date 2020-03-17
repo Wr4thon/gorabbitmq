@@ -364,6 +364,13 @@ func (s *service) connect() error {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
 	var err error
+
+	if s.conn != nil && !s.conn.IsClosed() {
+		if err := s.conn.Close(); err != nil {
+			locallog.Error(err)
+		}
+	}
+
 	s.conn, err = amqp.Dial(s.uri)
 	if err != nil {
 		locallog.Error(prefix, err)
