@@ -47,7 +47,6 @@ type queue struct {
 }
 
 func (c *queue) SendPlainText(body string) error {
-
 	return c.sendInternal(amqp.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(body),
