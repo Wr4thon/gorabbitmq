@@ -30,7 +30,7 @@ type channel struct {
 	closed              bool
 }
 
-// ChannelSettings ...
+// ChannelSettings are used to set prefetch count etc.
 type ChannelSettings struct {
 	UsePrefetch   bool // default false
 	PrefetchCount int
@@ -81,7 +81,8 @@ func (c *queueConnector) watchChannelConnection() {
 			continue
 		}
 
-		fmt.Println(elem)
+		fmt.Println("recreating channel cause of error:", elem)
+
 		err := c.createChannel()
 		if err != nil {
 			log.Println(err)
@@ -97,10 +98,6 @@ func (c *queueConnector) createChannel() error {
 	ch, err := c.connection.Channel()
 
 	channelErrorChannel := make(chan *amqp.Error)
-
-	// if c.channel != nil && !c.channel.closed {
-	// 	close(c.channel.channelErrorChannel)
-	// }
 
 	c.channel = &channel{
 		channel:             ch,

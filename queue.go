@@ -15,12 +15,14 @@ type Queue interface {
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
 	ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
 	GetMessagesCount() int
-	// registeres a consumer
-	// reads items from the queue and passes them in the provided callback.
+	/* RegisterConsumer registers a consumer
+	reads items from the queue and passes them in the provided callback.
+	*/
 	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
 	RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
-	// closes the virtual connection (channel) but not the real connection (tcp)
-	// you need to get e new Queue connection once this method is called
+	/* closes the virtual connection (channel) but not the real connection (tcp)
+	you need to get e new Queue connection once this method is called
+	*/
 	Close()
 	// Returns wether the channel is closed
 	IsClosed() bool
@@ -79,6 +81,7 @@ func (c *queue) Close() {
 	if c.channel.closed {
 		return
 	}
+
 	c.channel.close()
 }
 
@@ -91,7 +94,16 @@ func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery
 }
 
 func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
-	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	channel, err := c.channel.Consume(
+		c.queueSettings.QueueName,
+		"",
+		consumerSettings.AutoAck,
+		consumerSettings.Exclusive,
+		consumerSettings.NoLocal,
+		consumerSettings.NoWait,
+		nil,
+	)
+
 	if err != nil {
 		return err
 	}
@@ -107,7 +119,16 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 }
 
 func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
-	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	channel, err := c.channel.Consume(
+		c.queueSettings.QueueName,
+		"",
+		consumerSettings.AutoAck,
+		consumerSettings.Exclusive,
+		consumerSettings.NoLocal,
+		consumerSettings.NoWait,
+		nil,
+	)
+
 	if err != nil {
 		return err
 	}
@@ -125,16 +146,26 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 }
 
 func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
-	channel, err := c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
+	channel, err := c.channel.Consume(
+		c.queueSettings.QueueName,
+		"",
+		consumerSettings.AutoAck,
+		consumerSettings.Exclusive,
+		consumerSettings.NoLocal,
+		consumerSettings.NoWait,
+		nil,
+	)
 	if err != nil {
 		return err
 	}
 
 	item := <-channel
+
 	err = deliveryConsumer(item)
 	if err != nil {
 		log.Println(err)
 	}
+
 	c.Close()
 
 	return nil
