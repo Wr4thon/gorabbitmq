@@ -1,8 +1,8 @@
 package gorabbitmq
 
 import (
+	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	"github.com/streadway/amqp"
-	"github.com/tevino/abool"
 )
 
 // ConnectionSettings holds settings for a rabbitMQConnector connection
@@ -55,7 +55,5 @@ type consumerConfig struct {
 type channelWrapper struct {
 	originalDelivery *<-chan amqp.Delivery
 	externalDelivery *chan amqp.Delivery
-	channel          *amqp.Channel
-	stopWorkerChan   *chan bool
-	Connnected       *abool.AtomicBool
+	channel          *rabbitmq.Channel
 }
