@@ -2,6 +2,7 @@ package gorabbitmq
 
 import (
 	"errors"
+	"fmt"
 	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	locallog "github.com/prometheus/common/log"
 	"github.com/streadway/amqp"
@@ -79,17 +80,16 @@ func (s *service) CheckHealth() (err error) {
 	}
 
 	channel, err := s.createChannel()
-	if channel != nil {
-		_ = channel.Close()
+	if channel == nil {
+		err = errors.New(fmt.Sprint("rabbitmq created channel failed:", err))
+		return err
 	}
-
+	defer channel.Close()
 	for _, config := range s.ConsumerMap {
 		if config.channel == nil {
 			return errors.New("consumer channel is nil")
 		} else {
-			s.publishMutex.Lock()
-			queueResult, err := s.publishWrapper.channel.QueueInspect(config.queue)
-			s.publishMutex.Unlock()
+			queueResult, err := channel.QueueInspect(config.queue)
 			if err != nil || queueResult.Name != config.queue {
 				return err
 			}
