@@ -26,21 +26,21 @@ type RabbitMQ interface {
 }
 
 type service struct {
-	uri  string
-	conn *rabbitmq.Connection
-	*sync.RWMutex
+	uri            string
+	conn           *rabbitmq.Connection
 	publishWrapper *channelWrapper
+	publishMutex   sync.Mutex
 	ConsumerMap    map[string]*consumerConfig
 	exchanges      map[string]exchangeConfig
 	queues         map[string]queueConfig
 	queueBindings  map[string]queueBindings
-	MapMutex       *sync.Mutex
+	MapMutex       sync.Mutex
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		MapMutex:      &sync.Mutex{},
-		RWMutex:       &sync.RWMutex{},
+		publishMutex:  sync.Mutex{},
+		MapMutex:      sync.Mutex{},
 		ConsumerMap:   map[string]*consumerConfig{},
 		exchanges:     map[string]exchangeConfig{},
 		queues:        map[string]queueConfig{},
@@ -70,16 +70,13 @@ func (s *service) CheckHealth() (err error) {
 	prefix := "rabbitmq healthcheck: "
 	defer func() {
 		if err != nil {
-			locallog.Error(prefix, " unhealthy reason=", err)
+			err = errors.New(prefix + err.Error())
 		}
 	}()
-	s.RWMutex.RLock()
 	if s.conn == nil {
 		err = errors.New("rabbitmq connection is closed")
-		s.RWMutex.RUnlock()
 		return err
 	}
-	s.RWMutex.RUnlock()
 
 	channel, err := s.createChannel()
 	if channel != nil {
@@ -90,7 +87,9 @@ func (s *service) CheckHealth() (err error) {
 		if config.channel == nil {
 			return errors.New("consumer channel is nil")
 		} else {
-			queueResult, err := config.channel.QueueInspect(config.queue)
+			s.publishMutex.Lock()
+			queueResult, err := s.publishWrapper.channel.QueueInspect(config.queue)
+			s.publishMutex.Unlock()
 			if err != nil || queueResult.Name != config.queue {
 				return err
 			}
@@ -135,6 +134,8 @@ func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, intern
 			args:       args,
 		}
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
 }
 
@@ -142,6 +143,8 @@ func (s *service) ExchangeBind(destination, key, source string, noWait bool, arg
 	if s.publishWrapper.channel == nil {
 		return errors.New("no channel available")
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.ExchangeBind(destination, key, source, noWait, args)
 }
 
@@ -154,7 +157,8 @@ func (s *service) ExchangeDelete(name string, ifUnused, noWait bool) error {
 		defer s.MapMutex.Unlock()
 		delete(s.exchanges, name)
 	}
-
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.ExchangeDelete(name, ifUnused, noWait)
 }
 
@@ -172,6 +176,8 @@ func (s *service) QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int,
 			delete(s.queueBindings, name)
 		}
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
 }
 
@@ -191,6 +197,8 @@ func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.T
 			exchange: exchange,
 		}
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.QueueBind(name, key, exchange, noWait, args)
 }
 
@@ -211,6 +219,8 @@ func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWa
 			args:       args,
 		}
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	return s.publishWrapper.channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
 }
 
@@ -220,6 +230,8 @@ func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg a
 		locallog.Error(prefix, err)
 		return err
 	}
+	s.publishMutex.Lock()
+	defer s.publishMutex.Unlock()
 	err := s.publishWrapper.channel.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
 		locallog.Error(prefix, err)
@@ -250,15 +262,12 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	}
 
 	config.channelWrapper = channelWrapper
-	s.RWMutex.Lock()
 	s.ConsumerMap[config.queue] = &config
 	if s.conn == nil {
 		err := errors.New(prefix + "no connection available")
 		locallog.Error(prefix, err)
-		s.RWMutex.Unlock()
 		return *channelWrapper.externalDelivery
 	}
-	s.RWMutex.Unlock()
 	_ = s.connectConsumerWorker(&config)
 
 	return *channelWrapper.externalDelivery
@@ -314,8 +323,6 @@ func runConsumerWorker(config *consumerConfig) {
 }
 
 func (s *service) connect() error {
-	s.RWMutex.Lock()
-	defer s.RWMutex.Unlock()
 	var err error
 
 	if s.conn != nil && !s.conn.IsClosed() {
@@ -395,8 +402,6 @@ func (s *service) Reconnect() error {
 }
 
 func (s *service) Close() error {
-	s.RWMutex.Lock()
-	defer s.RWMutex.Unlock()
 	if s.publishWrapper != nil && s.publishWrapper.channel != nil {
 		err := s.publishWrapper.channel.Close()
 		if err != nil {
