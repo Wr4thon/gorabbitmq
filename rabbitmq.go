@@ -79,22 +79,12 @@ func (s *service) CheckHealth() (err error) {
 		return err
 	}
 
-	channel, err := s.createChannel()
+	channel, err := s.conn.Channel()
 	if channel == nil {
 		err = errors.New(fmt.Sprint("rabbitmq created channel failed:", err))
 		return err
 	}
 	defer channel.Close()
-	for _, config := range s.ConsumerMap {
-		if config.channel == nil {
-			return errors.New("consumer channel is nil")
-		} else {
-			queueResult, err := channel.QueueInspect(config.queue)
-			if err != nil || queueResult.Name != config.queue {
-				return err
-			}
-		}
-	}
 	return err
 }
 
@@ -359,11 +349,11 @@ func (s *service) connect() error {
 		locallog.Error(prefix, err)
 	}
 
-	err = s.setUpTopology()
-	if err != nil {
-		locallog.Error(prefix, err)
-		return err
-	}
+	//err = s.setUpTopology()
+	//if err != nil {
+	//	locallog.Error(prefix, err)
+	//	return err
+	//}
 
 	for _, config := range s.ConsumerMap {
 		locallog.Info(prefix, " restarting consumer")
