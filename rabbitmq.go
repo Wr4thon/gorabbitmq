@@ -27,20 +27,19 @@ type RabbitMQ interface {
 }
 
 type service struct {
-	uri            string
-	conn           *rabbitmq.Connection
-	publishWrapper *channelWrapper
-	publishMutex   sync.Mutex
-	ConsumerMap    map[string]*consumerConfig
-	exchanges      map[string]exchangeConfig
-	queues         map[string]queueConfig
-	queueBindings  map[string]queueBindings
-	MapMutex       sync.Mutex
+	uri           string
+	pubMutex      sync.Mutex
+	publishChan   *rabbitmq.Channel
+	conn          *rabbitmq.Connection
+	ConsumerMap   map[string]*consumerConfig
+	exchanges     map[string]exchangeConfig
+	queues        map[string]queueConfig
+	queueBindings map[string]queueBindings
+	MapMutex      sync.Mutex
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		publishMutex:  sync.Mutex{},
 		MapMutex:      sync.Mutex{},
 		ConsumerMap:   map[string]*consumerConfig{},
 		exchanges:     map[string]exchangeConfig{},
@@ -108,9 +107,6 @@ func (s *service) createChannel() (*rabbitmq.Channel, error) {
 }
 
 func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp.Table) error {
-	if s.publishWrapper.channel == nil {
-		return errors.New("no channel available")
-	}
 	if _, ok := s.exchanges[name]; !ok {
 		s.MapMutex.Lock()
 		defer s.MapMutex.Unlock()
@@ -124,38 +120,38 @@ func (s *service) ExchangeDeclare(name, kind string, durable, autoDelete, intern
 			args:       args,
 		}
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	return channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
 }
 
 func (s *service) ExchangeBind(destination, key, source string, noWait bool, args amqp.Table) error {
-	if s.publishWrapper.channel == nil {
-		return errors.New("no channel available")
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return err
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.ExchangeBind(destination, key, source, noWait, args)
+	defer channel.Close()
+	return channel.ExchangeBind(destination, key, source, noWait, args)
 }
 
 func (s *service) ExchangeDelete(name string, ifUnused, noWait bool) error {
-	if s.publishWrapper.channel == nil {
-		return errors.New("no channel available")
-	}
 	if _, ok := s.exchanges[name]; ok {
 		s.MapMutex.Lock()
 		defer s.MapMutex.Unlock()
 		delete(s.exchanges, name)
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.ExchangeDelete(name, ifUnused, noWait)
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	return channel.ExchangeDelete(name, ifUnused, noWait)
 }
 
 func (s *service) QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int, error) {
-	if s.publishWrapper.channel == nil {
-		return -1, errors.New("no channel available")
-	}
 
 	if _, ok := s.queues[name]; ok {
 		s.MapMutex.Lock()
@@ -166,16 +162,15 @@ func (s *service) QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int,
 			delete(s.queueBindings, name)
 		}
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return -1, err
+	}
+	defer channel.Close()
+	return channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
 }
 
 func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error {
-	if s.publishWrapper.channel == nil {
-		return errors.New("no channel available")
-	}
-
 	if _, ok := s.queueBindings[name]; !ok {
 		s.MapMutex.Lock()
 		defer s.MapMutex.Unlock()
@@ -187,16 +182,15 @@ func (s *service) QueueBind(name, key, exchange string, noWait bool, args amqp.T
 			exchange: exchange,
 		}
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.QueueBind(name, key, exchange, noWait, args)
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	return channel.QueueBind(name, key, exchange, noWait, args)
 }
 
 func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error) {
-	if s.publishWrapper.channel == nil {
-		return amqp.Queue{}, errors.New("no channel available")
-	}
-
 	if _, ok := s.queues[name]; !ok {
 		s.MapMutex.Lock()
 		defer s.MapMutex.Unlock()
@@ -209,20 +203,25 @@ func (s *service) QueueDeclare(name string, durable, autoDelete, exclusive, noWa
 			args:       args,
 		}
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	return s.publishWrapper.channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
+	channel, err := s.conn.Channel()
+	if err != nil {
+		return amqp.Queue{}, err
+	}
+	defer channel.Close()
+	return channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
 }
 
 func (s *service) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
-	if s.publishWrapper == nil {
-		err := errors.New("no connection for publish available")
-		locallog.Error(prefix, err)
-		return err
+	s.pubMutex.Lock()
+	defer s.pubMutex.Unlock()
+	if s.publishChan == nil {
+		channel, err := s.conn.Channel()
+		if err != nil {
+			return err
+		}
+		s.publishChan = channel
 	}
-	s.publishMutex.Lock()
-	defer s.publishMutex.Unlock()
-	err := s.publishWrapper.channel.Publish(exchange, key, mandatory, immediate, msg)
+	err := s.publishChan.Publish(exchange, key, mandatory, immediate, msg)
 	if err != nil {
 		locallog.Error(prefix, err)
 		return err
@@ -326,20 +325,13 @@ func (s *service) connect() error {
 		locallog.Error(prefix, err)
 		return err
 	}
-	if s.publishWrapper == nil {
-		s.publishWrapper = &channelWrapper{
-			originalDelivery: nil,
-			externalDelivery: nil,
-			channel:          nil,
-		}
-	}
 
 	publishChan, err := s.conn.Channel()
 	if err != nil {
 		locallog.Error(prefix, err)
 		return err
 	}
-	s.publishWrapper.channel = publishChan
+	s.publishChan = publishChan
 	err = publishChan.Qos(
 		1,     // prefetch count
 		0,     // prefetch size
@@ -392,8 +384,8 @@ func (s *service) Reconnect() error {
 }
 
 func (s *service) Close() error {
-	if s.publishWrapper != nil && s.publishWrapper.channel != nil {
-		err := s.publishWrapper.channel.Close()
+	if s.publishChan != nil && s.publishChan != nil {
+		err := s.publishChan.Close()
 		if err != nil {
 			return err
 		}
