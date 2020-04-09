@@ -21,8 +21,8 @@ type RabbitMQ interface {
 	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
 	QueueDelete(name string, ifUnused, ifEmpty, noWait bool) (int, error)
 	Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
-	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery
-	Reconnect() error
+	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) <-chan amqp.Delivery //deprecated
+	Reconnect() error                                                                                                                                //deprecated
 	CreateChannel() (*rabbitmq.Channel, error)
 	ConsumeQos(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, prefetchCount, prefetchSize int, args amqp.Table) (<-chan amqp.Delivery, error)
 	PublishWithChannel(channel *rabbitmq.Channel, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
