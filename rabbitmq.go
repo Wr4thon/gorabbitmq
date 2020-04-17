@@ -29,16 +29,14 @@ type RabbitMQ interface {
 }
 
 type service struct {
-	uri         string
-	pubMutex    sync.Mutex
-	publishChan *rabbitmq.Channel
-	conn        *rabbitmq.Connection
-	ConsumerMap map[string]*consumerConfig
+	uri          string
+	pubMutex     sync.Mutex
+	publishChan  *rabbitmq.Channel
+	conn         *rabbitmq.Connection
 }
 
 func NewRabbitMQ(settings ConnectionSettings) (RabbitMQ, error) {
 	rabbitMQ := service{
-		ConsumerMap: map[string]*consumerConfig{},
 	}
 
 	uri := amqp.URI{
@@ -217,7 +215,6 @@ func (s *service) Consume(queue, consumer string, autoAck, exclusive, noLocal, n
 	}
 
 	config.channelWrapper = channelWrapper
-	s.ConsumerMap[config.queue] = &config
 	if s.conn == nil {
 		err := errors.New(prefix + "no connection available")
 		locallog.Error(prefix, err)
