@@ -40,10 +40,12 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 	var sb strings.Builder
 
 	sb.WriteString("amqp://")
-	sb.WriteString(url.QueryEscape(queueSettings.UserName))
-	sb.WriteString(":")
-	sb.WriteString(url.QueryEscape(queueSettings.Password))
-	sb.WriteString("@")
+	if len(queueSettings.UserName) > 0 || len(queueSettings.Password) > 0 {
+		sb.WriteString(url.QueryEscape(queueSettings.UserName))
+		sb.WriteString(":")
+		sb.WriteString(url.QueryEscape(queueSettings.Password))
+		sb.WriteString("@")
+	}
 	sb.WriteString(url.QueryEscape(queueSettings.Host))
 	sb.WriteString(":")
 	sb.WriteString(strconv.Itoa(queueSettings.Port))
