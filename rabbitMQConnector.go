@@ -9,12 +9,13 @@ import (
 
 	"github.com/Noobygames/amqp"
 	"github.com/Noobygames/go-amqp-reconnect/rabbitmq"
+	"github.com/pkg/errors"
 )
 
 // QueueConnector is the tcp connection for the communication with the RabbitMQ Server
 // can be used to connect to a queue
 type QueueConnector interface {
-	ConnectToQueue(settings QueueSettings) (Queue, error)
+	ConnectToQueue(settings QueueSettings, configSetter ...ConfigBuilder) (Queue, error)
 }
 
 type queueConnector struct {
@@ -140,7 +141,7 @@ func (c *channel) close() {
 }
 
 // ConnectToChannel connects to a channel
-func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings) (Queue, error) {
+func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings, configSetter ...ConfigBuilder) (Queue, error) {
 	rabbitmq.Debug = true
 
 	if c.channel == nil || c.channel.closed {
@@ -168,6 +169,12 @@ func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings) (Queue, err
 		queueSettings: queueSettings,
 		channel:       c.channel,
 		queue:         nativeQueue,
+	}
+
+	for _, setter := range configSetter {
+		if err := setter(connection); err != nil {
+			return nil, errors.Wrap(err, "error while setting property")
+		}
 	}
 
 	return connection, nil

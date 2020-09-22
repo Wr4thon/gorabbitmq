@@ -1,8 +1,11 @@
 package gorabbitmq
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,7 +25,7 @@ func TestConsume(t *testing.T) {
 		t.Error(err)
 	}
 
-	err = enqueue.Send(TestTask{ID: 1337})
+	err = enqueue.Send(context.TODO(), TestTask{ID: 1337})
 	if err != nil {
 		t.Error("Could not enqueue Task: ", err)
 	}
@@ -38,7 +41,7 @@ func TestConsume(t *testing.T) {
 
 func consume(queue Queue, t *testing.T) {
 	consumerSettings := ConsumerSettings{AutoAck: false, Exclusive: false, NoLocal: false, NoWait: false}
-	deliveryConsumer := DeliveryConsumer(func(delivery amqp.Delivery) error {
+	deliveryConsumer := DeliveryConsumer(func(c context.Context, delivery amqp.Delivery) error {
 		if queue.IsClosed() {
 			return errors.New("queue channel was closed")
 		}
@@ -125,4 +128,80 @@ func connectToRabbit(queueName string) (Queue, error) {
 	}
 
 	return rabbitQueue, nil
+}
+
+type loggingContextKey struct{}
+
+func TestSendWithContext(t *testing.T) {
+	connection, err := NewConnection(ConnectionSettings{
+		Host:     "localhost",
+		Password: "guest",
+		UserName: "guest",
+		Port:     5672,
+	}, ChannelSettings{
+		UsePrefetch: false,
+	})
+
+	if err != nil {
+		t.Log("error while creating the connection", err)
+		t.FailNow()
+	}
+
+	inputLoggingContext := map[string]interface{}{
+		"foo": "bar",
+	}
+
+	queue, err := connection.ConnectToQueue(QueueSettings{
+		QueueName:        "test",
+		DeleteWhenUnused: true,
+		Durable:          false,
+		Exclusive:        true,
+		NoWait:           false,
+	}, WithLoggingContextExtractor(func(c context.Context) (map[string]interface{}, error) {
+		return inputLoggingContext, nil
+	}), WithLoggingContextBuilder(func(m map[string]interface{}) (context.Context, error) {
+		return context.WithValue(context.Background(), loggingContextKey{}, m), nil
+	}))
+
+	if err != nil {
+		t.Log("error while connecting to queue", err)
+		t.FailNow()
+	}
+
+	var wg sync.WaitGroup
+
+	go func() {
+		queue.ConsumerOnce(ConsumerSettings{
+			AutoAck:   false,
+			Exclusive: true,
+			NoLocal:   false,
+			NoWait:    false,
+		}, func(ctx context.Context, a amqp.Delivery) error {
+			defer wg.Done()
+
+			out, ok := ctx.Value(loggingContextKey{}).(map[string]interface{})
+			if !ok {
+				t.Fail()
+			}
+
+			t.Log(out)
+
+			if !validateContext(inputLoggingContext, out) {
+				t.Fail()
+			}
+
+			return nil
+		})
+	}()
+
+	wg.Add(1)
+	if err = queue.Send(context.TODO(), TestTask{ID: 1337}); err != nil {
+		panic(err)
+	}
+
+	wg.Wait()
+}
+
+func validateContext(in, out map[string]interface{}) bool {
+	return reflect.DeepEqual(in, out)
 }
