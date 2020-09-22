@@ -1,17 +1,21 @@
 package gorabbitmq
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 
 	"github.com/Noobygames/amqp"
+	"github.com/pkg/errors"
 )
+
+const keyDeliveryContext string = "@context"
 
 // Queue is the main interaction interface with the RabbitMQ Server
 type Queue interface {
 	SendPlainString(body string) error
-	Send(body interface{}) error
-	SendWithTable(body interface{}, table map[string]interface{}) error
+	Send(ctx context.Context, body interface{}) error
+	SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
 	ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
 	GetMessagesCount() int
@@ -30,7 +34,7 @@ type Queue interface {
 
 type (
 	// DeliveryConsumer can be registered as consumer
-	DeliveryConsumer func(amqp.Delivery) error
+	DeliveryConsumer func(context.Context, amqp.Delivery) error
 )
 
 // ConsumerSettings are uses as settings for amqp
@@ -43,9 +47,32 @@ type ConsumerSettings struct {
 
 type queue struct {
 	Queue
-	queueSettings QueueSettings
-	channel       *channel
-	queue         amqp.Queue
+	queueSettings    QueueSettings
+	channel          *channel
+	queue            amqp.Queue
+	loggingExtractor LoggingContextExtractor
+	loggingBuilder   LoggingContextBuilder
+}
+
+type LoggingContextExtractor func(context.Context) (map[string]interface{}, error)
+type LoggingContextBuilder func(map[string]interface{}) (context.Context, error)
+
+type ConfigBuilder func(*queue) error
+
+func WithLoggingContextExtractor(contextExtractor LoggingContextExtractor) ConfigBuilder {
+	return func(q *queue) error {
+		q.loggingExtractor = contextExtractor
+
+		return nil
+	}
+}
+
+func WithLoggingContextBuilder(contextBuilder LoggingContextBuilder) ConfigBuilder {
+	return func(q *queue) error {
+		q.loggingBuilder = contextBuilder
+
+		return nil
+	}
 }
 
 func (c *queue) SendPlainText(body string) error {
@@ -55,15 +82,28 @@ func (c *queue) SendPlainText(body string) error {
 	})
 }
 
-func (c *queue) Send(body interface{}) error {
-	return c.SendWithTable(body, nil)
+func (c *queue) Send(ctx context.Context, body interface{}) error {
+	return c.SendWithTable(ctx, body, nil)
 }
 
-func (c *queue) SendWithTable(body interface{}, table map[string]interface{}) error {
+func (c *queue) SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error {
 	message, err := json.Marshal(&body)
 
 	if err != nil {
 		return err
+	}
+
+	if c.loggingExtractor != nil {
+		loggingCtx, err := c.loggingExtractor(ctx)
+		if err != nil {
+			return errors.Wrap(err, "error while trying to extract loggingContext from passed context")
+		}
+
+		if table == nil {
+			table = make(map[string]interface{})
+		}
+
+		table[keyDeliveryContext] = amqp.Table(loggingCtx)
 	}
 
 	return c.sendInternal(amqp.Publishing{
@@ -109,9 +149,16 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 	}
 
 	for item := range channel {
-		err := deliveryConsumer(item)
+
+		ctx, err := c.loadContext(item)
 		if err != nil {
-			log.Println(err)
+			return errors.Wrap(err, "error while loading context")
+		}
+
+		err = deliveryConsumer(ctx, item)
+
+		if err != nil {
+			return errors.Wrap(err, "error while delivering message to consumer")
 		}
 	}
 
@@ -135,7 +182,12 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 
 	go func() {
 		for item := range channel {
-			err := deliveryConsumer(item)
+			ctx, err := c.loadContext(item)
+			if err != nil {
+				// TODO: return errors.Wrap(err, "error while loading context")
+			}
+
+			err = deliveryConsumer(ctx, item)
 			if err != nil {
 				log.Println(err)
 			}
@@ -161,7 +213,12 @@ func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer
 
 	item := <-channel
 
-	err = deliveryConsumer(item)
+	ctx, err := c.loadContext(item)
+	if err != nil {
+		return errors.Wrap(err, "error while loading context")
+	}
+
+	err = deliveryConsumer(ctx, item)
 	if err != nil {
 		log.Println(err)
 	}
@@ -173,4 +230,24 @@ func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer
 
 func (c *queue) GetMessagesCount() int {
 	return c.queue.Messages
+}
+
+func (c *queue) loadContext(delivery amqp.Delivery) (context.Context, error) {
+	ctx := context.Background()
+	var err error
+
+	if c.loggingBuilder != nil {
+
+		contextMap := make(map[string]interface{})
+		if table, ok := delivery.Headers[keyDeliveryContext].(amqp.Table); ok {
+			contextMap = map[string]interface{}(table)
+		}
+
+		ctx, err = c.loggingBuilder(contextMap)
+		if err != nil {
+			return nil, errors.Wrap(err, "error wile loading Context from passed value")
+		}
+	}
+
+	return ctx, nil
 }
