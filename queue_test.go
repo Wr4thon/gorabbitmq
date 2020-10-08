@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Noobygames/amqp"
 	"github.com/labstack/gommon/log"
 	"github.com/pkg/errors"
 )
@@ -41,18 +40,18 @@ func TestConsume(t *testing.T) {
 
 func consume(queue Queue, t *testing.T) {
 	consumerSettings := ConsumerSettings{AutoAck: false, Exclusive: false, NoLocal: false, NoWait: false}
-	deliveryConsumer := DeliveryConsumer(func(c context.Context, delivery amqp.Delivery) error {
+	deliveryConsumer := func(context Context) error {
 		if queue.IsClosed() {
 			return errors.New("queue channel was closed")
 		}
 
 		var task TestTask
 
-		err := json.Unmarshal(delivery.Body, &task)
+		err := json.Unmarshal(context.Delivery().Body, &task)
 		if err != nil {
 			log.Error(err)
 
-			nackError := delivery.Nack(false, true)
+			nackError := context.Nack(false, true)
 			if nackError != nil {
 				fmt.Println("Failed to nack message")
 			}
@@ -64,13 +63,13 @@ func consume(queue Queue, t *testing.T) {
 
 		fmt.Println("Successfully handled message")
 
-		err = delivery.Ack(false)
+		err = context.Ack(false)
 		if err != nil {
 			fmt.Println("Failed to ack message")
 		}
 
 		return nil
-	})
+	}
 
 	err := queue.RegisterConsumer(consumerSettings, deliveryConsumer)
 	if err != nil {
@@ -171,15 +170,15 @@ func TestSendWithContext(t *testing.T) {
 	var wg sync.WaitGroup
 
 	go func() {
-		queue.ConsumerOnce(ConsumerSettings{
+		queue.ConsumeOnce(ConsumerSettings{
 			AutoAck:   false,
 			Exclusive: true,
 			NoLocal:   false,
 			NoWait:    false,
-		}, func(ctx context.Context, a amqp.Delivery) error {
+		}, func(ctx Context) error {
 			defer wg.Done()
 
-			out, ok := ctx.Value(loggingContextKey{}).(map[string]interface{})
+			out, ok := ctx.DeliveryContext().Value(loggingContextKey{}).(map[string]interface{})
 			if !ok {
 				t.Fail()
 			}
@@ -204,4 +203,84 @@ func TestSendWithContext(t *testing.T) {
 
 func validateContext(in, out map[string]interface{}) bool {
 	return reflect.DeepEqual(in, out)
+}
+
+func Test_Middleware(t *testing.T) {
+	connection, err := NewConnection(ConnectionSettings{
+		Host:     "localhost",
+		Password: "guest",
+		UserName: "guest",
+		Port:     5672,
+	}, ChannelSettings{
+		UsePrefetch: false,
+	})
+
+	if err != nil {
+		t.Log("error while creating the connection", err)
+		t.FailNow()
+	}
+
+	queue, err := connection.ConnectToQueue(QueueSettings{
+		QueueName:        "test",
+		DeleteWhenUnused: true,
+		Durable:          false,
+		Exclusive:        true,
+		NoWait:           false,
+	})
+
+	if err != nil {
+		t.Log("error while connecting to queue", err)
+		t.FailNow()
+	}
+
+	queue.SendPlainString("")
+
+	mw := Middleware()
+
+	queue.ConsumeOnce(
+		ConsumerSettings{
+			AutoAck:   false,
+			Exclusive: true,
+			NoLocal:   false,
+			NoWait:    false,
+		}, func(ctx Context) error {
+			return errors.New("something")
+		}, mw)
+}
+
+type customContext struct {
+	Context
+	errorCounter int
+}
+
+func Middleware() MiddlewareFunc {
+	return func(hf HandlerFunc) HandlerFunc {
+		return func(c Context) error {
+			ctx := customContext{
+				Context: c,
+			}
+
+			if v, ok := ctx.Delivery().Headers["@errorCounter"]; ok {
+				if i, ok := v.(int); ok {
+					ctx.errorCounter = i
+				}
+			}
+
+			err := hf(ctx)
+
+			if err != nil {
+				ctx.errorCounter++
+				ctx.Ack(false)
+				table := ctx.Delivery().Headers
+				if table == nil {
+					table = make(map[string]interface{})
+				}
+
+				table["@errorCounter"] = ctx.errorCounter
+				c.Queue().SendWithTable(ctx.Context.DeliveryContext(), ctx.Delivery().Body, table)
+			}
+
+			return err
+		}
+	}
 }

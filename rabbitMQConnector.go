@@ -169,6 +169,7 @@ func (c *queueConnector) ConnectToQueue(queueSettings QueueSettings, configSette
 		queueSettings: queueSettings,
 		channel:       c.channel,
 		queue:         nativeQueue,
+		doneChan:      make(chan struct{}),
 	}
 
 	for _, setter := range configSetter {
