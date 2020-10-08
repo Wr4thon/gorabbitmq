@@ -156,9 +156,9 @@ func TestSendWithContext(t *testing.T) {
 		Durable:          false,
 		Exclusive:        true,
 		NoWait:           false,
-	}, WithLoggingContextExtractor(func(c context.Context) (map[string]interface{}, error) {
+	}, WithContextExtractor(func(c context.Context) (map[string]interface{}, error) {
 		return inputLoggingContext, nil
-	}), WithLoggingContextBuilder(func(m map[string]interface{}) (context.Context, error) {
+	}), WithContextBuilder(func(m map[string]interface{}) (context.Context, error) {
 		return context.WithValue(context.Background(), loggingContextKey{}, m), nil
 	}))
 
