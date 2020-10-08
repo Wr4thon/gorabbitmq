@@ -11,63 +11,72 @@ import (
 
 const keyDeliveryContext string = "@context"
 
-// Queue is the main interaction interface with the RabbitMQ Server
-type Queue interface {
-	SendPlainString(body string) error
-	Send(ctx context.Context, body interface{}) error
-	SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error
-	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
-	ConsumeOnce(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
-	GetMessagesCount() int
-	/* RegisterConsumer registers a consumer
-	reads items from the queue and passes them in the provided callback.
-	*/
-	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
-	RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
-	/* closes the virtual connection (channel) but not the real connection (tcp)
-	you need to get e new Queue connection once this method is called
-	*/
-	Close()
-	// Returns wether the channel is closed
-	IsClosed() bool
-}
+type (
+	// Queue is the main interaction interface with the RabbitMQ Server
+	Queue interface {
+		SendPlainString(body string) error
+		Send(ctx context.Context, body interface{}) error
+		SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error
+		Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
+		ConsumeOnce(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
+		GetMessagesCount() int
+		/* RegisterConsumer registers a consumer
+		reads items from the queue and passes them in the provided callback.
+		*/
+		RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
+		RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
+		/* closes the virtual connection (channel) but not the real connection (tcp)
+		you need to get e new Queue connection once this method is called
+		*/
+		Close()
+		// Returns wether the channel is closed
+		IsClosed() bool
+	}
 
-// ConsumerSettings are uses as settings for amqp
-type ConsumerSettings struct {
-	AutoAck   bool
-	Exclusive bool
-	NoLocal   bool
-	NoWait    bool
-}
+	// ConsumerSettings are uses as settings for amqp
+	ConsumerSettings struct {
+		AutoAck   bool
+		Exclusive bool
+		NoLocal   bool
+		NoWait    bool
+	}
 
-type queue struct {
-	queueSettings    QueueSettings
-	channel          *channel
-	queue            amqp.Queue
-	loggingExtractor ContextExtractor
-	loggingBuilder   ContextBuilder
+	queue struct {
+		queueSettings    QueueSettings
+		channel          *channel
+		queue            amqp.Queue
+		contextExtractor ContextExtractor
+		contextBuilder   ContextBuilder
 
-	errorChan chan<- error
-	doneChan  chan struct{}
-	async     bool
+		errorChan chan<- error
+		doneChan  chan struct{}
+		async     bool
 
-	errorHandler ErrorHandler
-}
+		errorHandler ErrorHandler
+	}
 
-type ContextExtractor func(context.Context) (map[string]interface{}, error)
-type ContextBuilder func(map[string]interface{}) (context.Context, error)
+	// ContextExtractor can be used to extract a custom context from a
+	// amqp.Delivery
+	ContextExtractor func(context.Context) (map[string]interface{}, error)
 
-// ConfigBuilder is the function type that is called, when
-type ConfigBuilder func(*queue) error
+	// ContextBuilder can be used to extract a custom context from a
+	// amqp.Delivery
+	ContextBuilder func(map[string]interface{}) (context.Context, error)
 
-// ErrorHandler is the function type that can get called, when an error occurres
-// when processing a delivery
-type ErrorHandler func(Context, error) error
+	// ConfigBuilder is the function type that is called, when
+	ConfigBuilder func(*queue) error
 
-// DeliveryHandler is the function type that can get called, before or after
-// a delivery is received.
-type DeliveryHandler func(amqp.Delivery) error
+	// ErrorHandler is the function type that can get called, when an error occurres
+	// when processing a delivery
+	ErrorHandler func(Context, error) error
 
+	// DeliveryHandler is the function type that can get called, before or after
+	// a delivery is received.
+	DeliveryHandler func(amqp.Delivery) error
+)
+
+// WithErrorHandler sets the ErrorHandler function that gets called,
+// when an error occurred during processing of a delivery
 func WithErrorHandler(errorHandler ErrorHandler) ConfigBuilder {
 	return func(q *queue) error {
 		q.errorHandler = errorHandler
@@ -75,17 +84,21 @@ func WithErrorHandler(errorHandler ErrorHandler) ConfigBuilder {
 	}
 }
 
-func WithLoggingContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
+// WithContextExtractor sets the ContextExtractor function that gets called,
+// before a delivery gets served
+func WithContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
 	return func(q *queue) error {
-		q.loggingExtractor = contextExtractor
+		q.contextExtractor = contextExtractor
 
 		return nil
 	}
 }
 
-func WithLoggingContextBuilder(contextBuilder ContextBuilder) ConfigBuilder {
+// WithContextBuilder sets the ContextBuilder function that gets called,
+// before a delivery gets sent to the RabbitMQ
+func WithContextBuilder(contextBuilder ContextBuilder) ConfigBuilder {
 	return func(q *queue) error {
-		q.loggingBuilder = contextBuilder
+		q.contextBuilder = contextBuilder
 
 		return nil
 	}
@@ -117,8 +130,8 @@ func (c *queue) SendWithTable(ctx context.Context, body interface{}, table map[s
 		}
 	}
 
-	if c.loggingExtractor != nil {
-		loggingCtx, err := c.loggingExtractor(ctx)
+	if c.contextExtractor != nil {
+		loggingCtx, err := c.contextExtractor(ctx)
 		if err != nil {
 			return errors.Wrap(err, "error while trying to extract loggingContext from passed context")
 		}
@@ -288,14 +301,14 @@ func (c *queue) loadContext(delivery amqp.Delivery) (Context, error) {
 	ctx := context.Background()
 	var err error
 
-	if c.loggingBuilder != nil {
+	if c.contextBuilder != nil {
 
 		contextMap := make(map[string]interface{})
 		if table, ok := delivery.Headers[keyDeliveryContext].(amqp.Table); ok {
 			contextMap = map[string]interface{}(table)
 		}
 
-		ctx, err = c.loggingBuilder(contextMap)
+		ctx, err = c.contextBuilder(contextMap)
 		if err != nil {
 			return nil, errors.Wrap(err, "error wile loading Context from passed value")
 		}
