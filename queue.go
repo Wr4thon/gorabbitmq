@@ -17,13 +17,13 @@ type Queue interface {
 	Send(ctx context.Context, body interface{}) error
 	SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error
 	Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery, error)
-	ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	ConsumeOnce(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
 	GetMessagesCount() int
 	/* RegisterConsumer registers a consumer
 	reads items from the queue and passes them in the provided callback.
 	*/
-	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
-	RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error
+	RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
+	RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error
 	/* closes the virtual connection (channel) but not the real connection (tcp)
 	you need to get e new Queue connection once this method is called
 	*/
@@ -31,11 +31,6 @@ type Queue interface {
 	// Returns wether the channel is closed
 	IsClosed() bool
 }
-
-type (
-	// DeliveryConsumer can be registered as consumer
-	DeliveryConsumer func(context.Context, amqp.Delivery) error
-)
 
 // ConsumerSettings are uses as settings for amqp
 type ConsumerSettings struct {
@@ -46,20 +41,41 @@ type ConsumerSettings struct {
 }
 
 type queue struct {
-	Queue
 	queueSettings    QueueSettings
 	channel          *channel
 	queue            amqp.Queue
-	loggingExtractor LoggingContextExtractor
-	loggingBuilder   LoggingContextBuilder
+	loggingExtractor ContextExtractor
+	loggingBuilder   ContextBuilder
+
+	errorChan chan<- error
+	doneChan  chan struct{}
+	async     bool
+
+	errorHandler ErrorHandler
 }
 
-type LoggingContextExtractor func(context.Context) (map[string]interface{}, error)
-type LoggingContextBuilder func(map[string]interface{}) (context.Context, error)
+type ContextExtractor func(context.Context) (map[string]interface{}, error)
+type ContextBuilder func(map[string]interface{}) (context.Context, error)
 
+// ConfigBuilder is the function type that is called, when
 type ConfigBuilder func(*queue) error
 
-func WithLoggingContextExtractor(contextExtractor LoggingContextExtractor) ConfigBuilder {
+// ErrorHandler is the function type that can get called, when an error occurres
+// when processing a delivery
+type ErrorHandler func(Context, error) error
+
+// DeliveryHandler is the function type that can get called, before or after
+// a delivery is received.
+type DeliveryHandler func(amqp.Delivery) error
+
+func WithErrorHandler(errorHandler ErrorHandler) ConfigBuilder {
+	return func(q *queue) error {
+		q.errorHandler = errorHandler
+		return nil
+	}
+}
+
+func WithLoggingContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
 	return func(q *queue) error {
 		q.loggingExtractor = contextExtractor
 
@@ -67,7 +83,7 @@ func WithLoggingContextExtractor(contextExtractor LoggingContextExtractor) Confi
 	}
 }
 
-func WithLoggingContextBuilder(contextBuilder LoggingContextBuilder) ConfigBuilder {
+func WithLoggingContextBuilder(contextBuilder ContextBuilder) ConfigBuilder {
 	return func(q *queue) error {
 		q.loggingBuilder = contextBuilder
 
@@ -75,7 +91,7 @@ func WithLoggingContextBuilder(contextBuilder LoggingContextBuilder) ConfigBuild
 	}
 }
 
-func (c *queue) SendPlainText(body string) error {
+func (c *queue) SendPlainString(body string) error {
 	return c.sendInternal(amqp.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(body),
@@ -87,10 +103,18 @@ func (c *queue) Send(ctx context.Context, body interface{}) error {
 }
 
 func (c *queue) SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error {
-	message, err := json.Marshal(&body)
-
-	if err != nil {
-		return err
+	var message []byte
+	switch t := body.(type) {
+	case []byte:
+		message = t
+	case string:
+		message = []byte(t)
+	default:
+		var err error
+		message, err = json.Marshal(&body)
+		if err != nil {
+			return err
+		}
 	}
 
 	if c.loggingExtractor != nil {
@@ -122,6 +146,10 @@ func (c *queue) Close() {
 		return
 	}
 
+	if c.async {
+		c.doneChan <- struct{}{}
+	}
+
 	c.channel.close()
 }
 
@@ -133,7 +161,18 @@ func (c *queue) Consume(consumerSettings ConsumerSettings) (<-chan amqp.Delivery
 	return c.channel.Consume(c.queueSettings.QueueName, "", consumerSettings.AutoAck, consumerSettings.Exclusive, consumerSettings.NoLocal, consumerSettings.NoWait, nil)
 }
 
-func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+type queueError struct {
+	cause      error
+	innerError error
+	message    string
+}
+
+func (q queueError) Error() string {
+	return q.message
+}
+
+func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
+	c.async = false
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -149,23 +188,17 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 	}
 
 	for item := range channel {
-
-		ctx, err := c.loadContext(item)
-		if err != nil {
-			return errors.Wrap(err, "error while loading context")
-		}
-
-		err = deliveryConsumer(ctx, item)
-
-		if err != nil {
-			return errors.Wrap(err, "error while delivering message to consumer")
+		err := c.consumeItem(item, deliveryConsumer, middleware)
+		if err != nil && c.errorChan != nil {
+			c.errorChan <- err
 		}
 	}
 
 	return nil
 }
 
-func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
+	c.async = true
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -181,15 +214,15 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 	}
 
 	go func() {
-		for item := range channel {
-			ctx, err := c.loadContext(item)
-			if err != nil {
-				// TODO: return errors.Wrap(err, "error while loading context")
-			}
-
-			err = deliveryConsumer(ctx, item)
-			if err != nil {
-				log.Println(err)
+		for {
+			select {
+			case item := <-channel:
+				err = c.consumeItem(item, deliveryConsumer, middleware)
+				if err != nil {
+					log.Println(err)
+				}
+			case <-c.doneChan:
+				break
 			}
 		}
 	}()
@@ -197,7 +230,8 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 	return nil
 }
 
-func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer DeliveryConsumer) error {
+func (c *queue) ConsumeOnce(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
+	defer c.Close()
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -213,17 +247,35 @@ func (c *queue) ConsumerOnce(consumerSettings ConsumerSettings, deliveryConsumer
 
 	item := <-channel
 
-	ctx, err := c.loadContext(item)
+	return c.consumeItem(item, deliveryConsumer, middleware)
+}
+
+func (c *queue) consumeItem(item amqp.Delivery, deliveryConsumer HandlerFunc, middleware []MiddlewareFunc) error {
+	queueContext, err := c.loadContext(item)
 	if err != nil {
 		return errors.Wrap(err, "error while loading context")
 	}
 
-	err = deliveryConsumer(ctx, item)
-	if err != nil {
-		log.Println(err)
-	}
+	h := applyMiddleware(deliveryConsumer, middleware...)
 
-	c.Close()
+	err = h(queueContext)
+
+	if err != nil {
+		err := queueError{
+			innerError: err,
+			cause:      err,
+			message:    "error while executing deliveryConsumer",
+		}
+
+		if c.errorHandler == nil {
+			return errors.Wrap(err, "error while delivering message to consumer")
+		}
+
+		if handlerErr := c.errorHandler(queueContext, err); handlerErr != nil {
+			err.innerError = handlerErr
+			return err
+		}
+	}
 
 	return nil
 }
@@ -232,7 +284,7 @@ func (c *queue) GetMessagesCount() int {
 	return c.queue.Messages
 }
 
-func (c *queue) loadContext(delivery amqp.Delivery) (context.Context, error) {
+func (c *queue) loadContext(delivery amqp.Delivery) (Context, error) {
 	ctx := context.Background()
 	var err error
 
@@ -249,5 +301,13 @@ func (c *queue) loadContext(delivery amqp.Delivery) (context.Context, error) {
 		}
 	}
 
-	return ctx, nil
+	return newContext(ctx, delivery, c), nil
+
+}
+
+func applyMiddleware(h HandlerFunc, middleware ...MiddlewareFunc) HandlerFunc {
+	for i := len(middleware) - 1; i >= 0; i-- {
+		h = middleware[i](h)
+	}
+	return h
 }
