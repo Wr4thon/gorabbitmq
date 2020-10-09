@@ -46,7 +46,6 @@ func consume(queue Queue, t *testing.T) {
 		}
 
 		var task TestTask
-
 		err := json.Unmarshal(context.Delivery().Body, &task)
 		if err != nil {
 			log.Error(err)
@@ -60,7 +59,6 @@ func consume(queue Queue, t *testing.T) {
 		}
 
 		time.Sleep(10 * time.Millisecond)
-
 		fmt.Println("Successfully handled message")
 
 		err = context.Ack(false)
@@ -105,9 +103,7 @@ func connectToRabbit(queueName string) (Queue, error) {
 		Port:     rabbitPort,
 	}
 
-	channelSettings := ChannelSettings{}
-
-	rabbit, err := NewConnection(connectionSettings, channelSettings)
+	rabbit, err := NewConnection(connectionSettings, ChannelSettings{})
 	if err != nil {
 		const errMessage = "Failed to initialize rabbitmq"
 		return nil, errors.Wrap(err, errMessage)
@@ -184,7 +180,6 @@ func TestSendWithContext(t *testing.T) {
 			}
 
 			t.Log(out)
-
 			if !validateContext(inputLoggingContext, out) {
 				t.Fail()
 			}
@@ -214,7 +209,6 @@ func Test_Middleware(t *testing.T) {
 	}, ChannelSettings{
 		UsePrefetch: false,
 	})
-
 	if err != nil {
 		t.Log("error while creating the connection", err)
 		t.FailNow()
@@ -227,16 +221,13 @@ func Test_Middleware(t *testing.T) {
 		Exclusive:        true,
 		NoWait:           false,
 	})
-
 	if err != nil {
 		t.Log("error while connecting to queue", err)
 		t.FailNow()
 	}
 
 	queue.SendPlainString("")
-
 	mw := Middleware()
-
 	queue.ConsumeOnce(
 		ConsumerSettings{
 			AutoAck:   false,
@@ -267,7 +258,6 @@ func Middleware() MiddlewareFunc {
 			}
 
 			err := hf(ctx)
-
 			if err != nil {
 				ctx.errorCounter++
 				ctx.Ack(false)

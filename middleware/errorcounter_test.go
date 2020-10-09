@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Wr4thon/gorabbitmq/v2"
-	"github.com/Wr4thon/gorabbitmq/v2/middleware"
+	"github.com/Wr4thon/gorabbitmq/v3"
+	"github.com/Wr4thon/gorabbitmq/v3/middleware"
 )
 
 func Test_Middleware(t *testing.T) {
@@ -19,7 +19,6 @@ func Test_Middleware(t *testing.T) {
 	}, gorabbitmq.ChannelSettings{
 		UsePrefetch: false,
 	})
-
 	if err != nil {
 		t.Log("error while creating the connection", err)
 		t.FailNow()
@@ -37,16 +36,13 @@ func Test_Middleware(t *testing.T) {
 			return nil
 		}),
 	)
-
-	defer queue.Close()
-
 	if err != nil {
 		t.Log("error while connecting to queue", err)
 		t.FailNow()
 	}
 
+	defer queue.Close()
 	queue.SendPlainString("")
-
 	var wg sync.WaitGroup
 	wg.Add(6)
 

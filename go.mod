@@ -1,4 +1,4 @@
-module github.com/Wr4thon/gorabbitmq/v2
+module github.com/Wr4thon/gorabbitmq/v3
 
 go 1.15
 
