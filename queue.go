@@ -99,7 +99,6 @@ func WithContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
 func WithContextBuilder(contextBuilder ContextBuilder) ConfigBuilder {
 	return func(q *queue) error {
 		q.contextBuilder = contextBuilder
-
 		return nil
 	}
 }
@@ -195,7 +194,6 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 		consumerSettings.NoWait,
 		nil,
 	)
-
 	if err != nil {
 		return err
 	}
@@ -221,7 +219,6 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 		consumerSettings.NoWait,
 		nil,
 	)
-
 	if err != nil {
 		return err
 	}
@@ -270,9 +267,7 @@ func (c *queue) consumeItem(item amqp.Delivery, deliveryConsumer HandlerFunc, mi
 	}
 
 	h := applyMiddleware(deliveryConsumer, middleware...)
-
 	err = h(queueContext)
-
 	if err != nil {
 		err := queueError{
 			innerError: err,
@@ -302,7 +297,6 @@ func (c *queue) loadContext(delivery amqp.Delivery) (Context, error) {
 	var err error
 
 	if c.contextBuilder != nil {
-
 		contextMap := make(map[string]interface{})
 		if table, ok := delivery.Headers[keyDeliveryContext].(amqp.Table); ok {
 			contextMap = map[string]interface{}(table)

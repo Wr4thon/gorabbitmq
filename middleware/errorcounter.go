@@ -1,6 +1,6 @@
 package middleware
 
-import "github.com/Wr4thon/gorabbitmq/v2"
+import "github.com/Wr4thon/gorabbitmq/v3"
 
 // ErrorCounter can be used to extract the ErrorCounter from the context.
 type ErrorCounter struct{}
