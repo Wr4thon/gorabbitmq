@@ -1,6 +1,12 @@
 package middleware
 
-import "github.com/Wr4thon/gorabbitmq/v3"
+import (
+	"fmt"
+
+	"github.com/pkg/errors"
+
+	"github.com/Wr4thon/gorabbitmq/v3"
+)
 
 // ErrorCounter can be used to extract the ErrorCounter from the context.
 type ErrorCounter struct{}
@@ -11,7 +17,7 @@ const errorCounterKey = "@errorCounter"
 // TODO validate
 type ErrorCounterConfig struct {
 	MaxRetries         int32
-	MaxRetriesExceeded func(gorabbitmq.Context)
+	MaxRetriesExceeded func(gorabbitmq.Context) error
 }
 
 // ErrorCounterWithConfig is a middleware that counts errors when they occur.
@@ -30,7 +36,6 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 			err := hf(c)
 
 			if err != nil {
-				c.Ack(false)
 				table := c.Delivery().Headers
 				if table == nil {
 					table = make(map[string]interface{})
@@ -38,7 +43,12 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 
 				if errorCounter, ok := c.Value(ErrorCounter{}).(int32); ok {
 					if errorCounter >= config.MaxRetries {
-						config.MaxRetriesExceeded(c)
+						retryError := config.MaxRetriesExceeded(c)
+						if retryError != nil {
+							return errors.Wrap(retryError, fmt.Sprintf("failed to execute maxRetriesExceeded handler, after %v", err))
+						}
+
+						// mark message completed AND failed
 						c.Nack(false, false)
 						return nil
 					}
@@ -46,7 +56,15 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 					table[errorCounterKey] = errorCounter + 1
 				}
 
-				c.Queue().SendWithTable(c.DeliveryContext(), c.Delivery().Body, table)
+				// requeue message
+				requeueErr := c.Queue().SendWithTable(c.DeliveryContext(), c.Delivery().Body, table)
+				if requeueErr != nil {
+					return errors.Wrap(requeueErr, fmt.Sprintf("failed to requeue message, after %v", err))
+				}
+				// only when requeueing was successful, we should get here
+				c.Ack(false)
+			} else {
+				c.Ack(false)
 			}
 
 			return err
