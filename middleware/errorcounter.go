@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"fmt"
-
 	"github.com/pkg/errors"
 
 	"github.com/Wr4thon/gorabbitmq/v3"
@@ -45,7 +43,7 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 					if errorCounter >= config.MaxRetries {
 						retryError := config.MaxRetriesExceeded(c)
 						if retryError != nil {
-							return errors.Wrap(retryError, fmt.Sprintf("failed to execute maxRetriesExceeded handler, after %v", err))
+							return errors.Wrapf(retryError, "failed to execute maxRetriesExceeded handler, after %v", err)
 						}
 
 						// mark message completed AND failed
@@ -59,7 +57,7 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 				// requeue message
 				requeueErr := c.Queue().SendWithTable(c.DeliveryContext(), c.Delivery().Body, table)
 				if requeueErr != nil {
-					return errors.Wrap(requeueErr, fmt.Sprintf("failed to requeue message, after %v", err))
+					return errors.Wrapf(requeueErr, "failed to requeue message, after %v", err)
 				}
 				// only when requeueing was successful, we should get here
 				c.Ack(false)
