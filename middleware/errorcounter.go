@@ -46,7 +46,6 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 							return errors.Wrapf(retryError, "failed to execute maxRetriesExceeded handler, after %v", err)
 						}
 
-						// mark message completed AND failed
 						c.Nack(false, false)
 						return nil
 					}
@@ -54,17 +53,13 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 					table[errorCounterKey] = errorCounter + 1
 				}
 
-				// requeue message
 				requeueErr := c.Queue().SendWithTable(c.DeliveryContext(), c.Delivery().Body, table)
 				if requeueErr != nil {
 					return errors.Wrapf(requeueErr, "failed to requeue message, after %v", err)
 				}
-				// only when requeueing was successful, we should get here
-				c.Ack(false)
-			} else {
-				c.Ack(false)
 			}
 
+			c.Ack(false)
 			return err
 		}
 	}
