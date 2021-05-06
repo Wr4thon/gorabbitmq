@@ -59,7 +59,7 @@ func Test_Middleware(t *testing.T) {
 		middleware.ErrorCounterWithConfig(
 			middleware.ErrorCounterConfig{
 				MaxRetries: 5,
-				MaxRetriesExceeded: func(gorabbitmq.Context) error {
+				MaxRetriesExceeded: func(gorabbitmq.Context, error) error {
 					log.Print("Exceeded!")
 					return nil
 				},

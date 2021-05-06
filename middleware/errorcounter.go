@@ -15,7 +15,7 @@ const errorCounterKey = "@errorCounter"
 // TODO validate
 type ErrorCounterConfig struct {
 	MaxRetries         int32
-	MaxRetriesExceeded func(gorabbitmq.Context) error
+	MaxRetriesExceeded func(gorabbitmq.Context, error) error
 }
 
 // ErrorCounterWithConfig is a middleware that counts errors when they occur.
@@ -41,7 +41,7 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 
 				if errorCounter, ok := c.Value(ErrorCounter{}).(int32); ok {
 					if errorCounter >= config.MaxRetries {
-						retryError := config.MaxRetriesExceeded(c)
+						retryError := config.MaxRetriesExceeded(c, err)
 						if retryError != nil {
 							return errors.Wrapf(retryError, "failed to execute maxRetriesExceeded handler, after %v", err)
 						}
