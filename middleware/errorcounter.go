@@ -3,7 +3,7 @@ package middleware
 import (
 	"github.com/pkg/errors"
 
-	"github.com/Wr4thon/gorabbitmq/v3"
+	"github.com/Wr4thon/gorabbitmq"
 )
 
 // ErrorCounter can be used to extract the ErrorCounter from the context.
