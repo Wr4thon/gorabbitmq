@@ -4,12 +4,12 @@ This libary is a wrapper around the Go RabbitMQ Client Library. https://github.c
 
 Supported Go Versions
 
-This library supports two most recent Go, currently 1.13
+This library supports two most recent Go, currently 1.16
 
 ## INSTALL
 
 ```bash
-go get github.com/Wr4thon/gorabbitmq/v3
+go get github.com/Wr4thon/gorabbitmq/v4
 ```
 
 ## USAGE
