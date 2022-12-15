@@ -9,7 +9,7 @@ This library supports two most recent Go, currently 1.16
 ## INSTALL
 
 ```bash
-go get github.com/Wr4thon/gorabbitmq/v4
+go get github.com/Clarilab/gorabbitmq/v4
 ```
 
 ## USAGE

@@ -1,4 +1,4 @@
-module github.com/Wr4thon/gorabbitmq/v4
+module github.com/Clarilab/gorabbitmq/v4
 
 go 1.15
 

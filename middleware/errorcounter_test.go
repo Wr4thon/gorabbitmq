@@ -6,8 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Wr4thon/gorabbitmq/v4"
-	"github.com/Wr4thon/gorabbitmq/v4/middleware"
+	"github.com/Clarilab/gorabbitmq/v4/middleware"
 )
 
 func Test_Middleware(t *testing.T) {

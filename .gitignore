@@ -51,3 +51,6 @@
 
 ### kdiff 3 ###
 *.orig
+
+### IntelliJ ###
+.idea/*
