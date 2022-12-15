@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Clarilab/gorabbitmq/v4"
 	"github.com/Clarilab/gorabbitmq/v4/middleware"
 )
 
