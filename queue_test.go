@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/gommon/log"
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/require"
 )
 
 // TestTask is used to test
@@ -273,4 +274,75 @@ func Middleware() MiddlewareFunc {
 			return err
 		}
 	}
+}
+
+func Test_CorrelationID(t *testing.T) {
+	const correlationID string = "0123456789"
+
+	connSettings := ConnectionSettings{
+		Host:     "localhost",
+		Port:     5672,
+		UserName: "guest",
+		Password: "guest",
+	}
+	chanSettings := ChannelSettings{}
+
+	connector, err := NewConnection(connSettings, chanSettings)
+	require.NoError(t, err)
+
+	qSettings := QueueSettings{
+		QueueName:        "test_queue",
+		Durable:          true,
+		Exclusive:        false,
+		DeleteWhenUnused: false,
+		NoWait:           false,
+	}
+
+	queue, err := connector.ConnectToQueue(qSettings)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), keyCorrelationID, correlationID), 5*time.Second)
+	defer cancel()
+
+	t.Logf("publishing message with correlationID: %s\n", ctx.Value(keyCorrelationID))
+
+	err = queue.Send(ctx, "Hello World!")
+	require.NoError(t, err)
+
+	go consumeCorrelationID(queue, t)
+
+	time.Sleep(500 * time.Millisecond)
+}
+
+func consumeCorrelationID(queue Queue, t *testing.T) {
+	var err error
+	consumerSettings := ConsumerSettings{
+		AutoAck:   false,
+		Exclusive: false,
+		NoLocal:   false,
+		NoWait:    false,
+	}
+
+	handlerFunc := func(ctx Context) error {
+		require.False(t, queue.IsClosed())
+
+		correlationID, ok := ctx.DeliveryContext().Value(keyCorrelationID).(string)
+		if !ok {
+			err = ctx.Nack(false, true)
+			require.NoError(t, err)
+
+			return errors.New("no correlation id")
+		}
+
+		t.Logf("received message with correlationID: %s\n", correlationID)
+
+		if err = ctx.Ack(false); err != nil {
+			require.NoError(t, err)
+		}
+
+		return nil
+	}
+
+	err = queue.RegisterConsumer(consumerSettings, handlerFunc)
+	require.NoError(t, err)
 }

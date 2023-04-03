@@ -13,7 +13,7 @@ import (
 )
 
 // QueueConnector is the tcp connection for the communication with the RabbitMQ Server
-// can be used to connect to a queue
+// can be used to connect to a queue.
 type QueueConnector interface {
 	ConnectToQueue(settings QueueSettings, configSetter ...ConfigBuilder) (Queue, error)
 }
@@ -41,12 +41,14 @@ func getConnectionString(queueSettings ConnectionSettings) string {
 	var sb strings.Builder
 
 	sb.WriteString("amqp://")
+
 	if len(queueSettings.UserName) > 0 || len(queueSettings.Password) > 0 {
 		sb.WriteString(url.QueryEscape(queueSettings.UserName))
 		sb.WriteString(":")
 		sb.WriteString(url.QueryEscape(queueSettings.Password))
 		sb.WriteString("@")
 	}
+
 	sb.WriteString(url.QueryEscape(queueSettings.Host))
 	sb.WriteString(":")
 	sb.WriteString(strconv.Itoa(queueSettings.Port))
@@ -60,7 +62,6 @@ func NewConnection(settings ConnectionSettings, channelSettings ChannelSettings)
 	connectionString := getConnectionString(settings)
 
 	conn, err := rabbitmq.Dial(connectionString)
-
 	if err != nil {
 		return nil, err
 	}

@@ -32,7 +32,6 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 			}
 
 			err := hf(c)
-
 			if err != nil {
 				table := c.Delivery().Headers
 				if table == nil {
@@ -47,6 +46,7 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 						}
 
 						c.Nack(false, false)
+
 						return nil
 					}
 
@@ -60,6 +60,7 @@ func ErrorCounterWithConfig(config ErrorCounterConfig) gorabbitmq.MiddlewareFunc
 			}
 
 			c.Ack(false)
+
 			return err
 		}
 	}
