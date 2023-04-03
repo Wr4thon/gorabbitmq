@@ -1,6 +1,6 @@
 module github.com/Clarilab/gorabbitmq/v4
 
-go 1.20
+go 1.15
 
 require (
 	github.com/Noobygames/amqp v0.5.0
