@@ -9,10 +9,13 @@ import (
 	"github.com/pkg/errors"
 )
 
-const keyDeliveryContext string = "@context"
+const (
+	keyDeliveryContext string = "@context"
+	keyCorrelationID   string = "X-Correlation-ID"
+)
 
 type (
-	// Queue is the main interaction interface with the RabbitMQ Server
+	// Queue is the main interaction interface with the RabbitMQ Server.
 	Queue interface {
 		SendPlainString(body string) error
 		Send(ctx context.Context, body interface{}) error
@@ -33,7 +36,7 @@ type (
 		IsClosed() bool
 	}
 
-	// ConsumerSettings are uses as settings for amqp
+	// ConsumerSettings are uses as settings for amqp.
 	ConsumerSettings struct {
 		AutoAck   bool
 		Exclusive bool
@@ -56,18 +59,19 @@ type (
 	}
 
 	// ContextExtractor can be used to extract a custom context from a
-	// amqp.Delivery
+	// amqp.Delivery.
 	ContextExtractor func(context.Context) (map[string]interface{}, error)
 
 	// ContextBuilder can be used to extract a custom context from a
-	// amqp.Delivery
+	// amqp.Delivery.
 	ContextBuilder func(map[string]interface{}) (context.Context, error)
 
-	// ConfigBuilder is the function type that is called, when
+	// ConfigBuilder is the function type that is called, when using one of
+	// ContextExtractor, ContextBuilder or the ErrorHandler.
 	ConfigBuilder func(*queue) error
 
 	// ErrorHandler is the function type that can get called, when an error occurres
-	// when processing a delivery
+	// when processing a delivery.
 	ErrorHandler func(Context, error) error
 
 	// DeliveryHandler is the function type that can get called, before or after
@@ -76,16 +80,17 @@ type (
 )
 
 // WithErrorHandler sets the ErrorHandler function that gets called,
-// when an error occurred during processing of a delivery
+// when an error occurred during processing of a delivery.
 func WithErrorHandler(errorHandler ErrorHandler) ConfigBuilder {
 	return func(q *queue) error {
 		q.errorHandler = errorHandler
+
 		return nil
 	}
 }
 
 // WithContextExtractor sets the ContextExtractor function that gets called,
-// before a delivery gets served
+// before a delivery gets served.
 func WithContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
 	return func(q *queue) error {
 		q.contextExtractor = contextExtractor
@@ -95,10 +100,11 @@ func WithContextExtractor(contextExtractor ContextExtractor) ConfigBuilder {
 }
 
 // WithContextBuilder sets the ContextBuilder function that gets called,
-// before a delivery gets sent to the RabbitMQ
+// before a delivery gets sent to the RabbitMQ.
 func WithContextBuilder(contextBuilder ContextBuilder) ConfigBuilder {
 	return func(q *queue) error {
 		q.contextBuilder = contextBuilder
+
 		return nil
 	}
 }
@@ -116,6 +122,7 @@ func (c *queue) Send(ctx context.Context, body interface{}) error {
 
 func (c *queue) SendWithTable(ctx context.Context, body interface{}, table map[string]interface{}) error {
 	var message []byte
+
 	switch t := body.(type) {
 	case []byte:
 		message = t
@@ -123,10 +130,20 @@ func (c *queue) SendWithTable(ctx context.Context, body interface{}, table map[s
 		message = []byte(t)
 	default:
 		var err error
+
 		message, err = json.Marshal(&body)
 		if err != nil {
 			return err
 		}
+	}
+
+	correlationID, ok := ctx.Value(keyCorrelationID).(string)
+	if ok {
+		if table == nil {
+			table = make(map[string]interface{})
+		}
+
+		table[keyCorrelationID] = correlationID
 	}
 
 	if c.contextExtractor != nil {
@@ -185,6 +202,7 @@ func (q queueError) Error() string {
 
 func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
 	c.async = false
+
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -210,6 +228,7 @@ func (c *queue) RegisterConsumer(consumerSettings ConsumerSettings, deliveryCons
 
 func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
 	c.async = true
+
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -242,6 +261,7 @@ func (c *queue) RegisterConsumerAsync(consumerSettings ConsumerSettings, deliver
 
 func (c *queue) ConsumeOnce(consumerSettings ConsumerSettings, deliveryConsumer HandlerFunc, middleware ...MiddlewareFunc) error {
 	defer c.Close()
+
 	channel, err := c.channel.Consume(
 		c.queueSettings.QueueName,
 		"",
@@ -268,6 +288,7 @@ func (c *queue) consumeItem(item amqp.Delivery, deliveryConsumer HandlerFunc, mi
 
 	h := applyMiddleware(deliveryConsumer, middleware...)
 	err = h(queueContext)
+
 	if err != nil {
 		err := queueError{
 			innerError: err,
@@ -281,6 +302,7 @@ func (c *queue) consumeItem(item amqp.Delivery, deliveryConsumer HandlerFunc, mi
 
 		if handlerErr := c.errorHandler(queueContext, err); handlerErr != nil {
 			err.innerError = handlerErr
+
 			return err
 		}
 	}
@@ -296,6 +318,11 @@ func (c *queue) loadContext(delivery amqp.Delivery) (Context, error) {
 	ctx := context.Background()
 	var err error
 
+	correlationID, ok := delivery.Headers[keyCorrelationID].(string)
+	if ok {
+		ctx = context.WithValue(ctx, keyCorrelationID, correlationID)
+	}
+
 	if c.contextBuilder != nil {
 		contextMap := make(map[string]interface{})
 		if table, ok := delivery.Headers[keyDeliveryContext].(amqp.Table); ok {
@@ -309,12 +336,12 @@ func (c *queue) loadContext(delivery amqp.Delivery) (Context, error) {
 	}
 
 	return newContext(ctx, delivery, c), nil
-
 }
 
 func applyMiddleware(h HandlerFunc, middleware ...MiddlewareFunc) HandlerFunc {
 	for i := len(middleware) - 1; i >= 0; i-- {
 		h = middleware[i](h)
 	}
+
 	return h
 }

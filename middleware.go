@@ -8,7 +8,7 @@ import (
 
 type (
 	// Context is the context, that is passed to the handler and middleware
-	// functions
+	// functions.
 	Context interface {
 		Delivery() amqp.Delivery
 		DeliveryContext() context.Context
