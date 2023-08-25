@@ -12,3 +12,6 @@ var ErrMaxRetriesExceeded = errors.New("max retries exceeded")
 
 // ErrHealthyConnection occures if a manual reconnect is triggered but the connection persists.
 var ErrHealthyConnection = errors.New("connection is healthy, no need to reconnect")
+
+// ErrChannelClosed occures when the channel is accessed but closed.
+var ErrChannelClosed = errors.New("channel is closed")

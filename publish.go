@@ -3,7 +3,6 @@ package gorabbitmq
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -17,14 +16,15 @@ const (
 
 // Publisher is a publisher for AMQP messages.
 type Publisher struct {
-	channel *amqp.Channel
+	conn    *Connection
 	options *PublishOptions
 	encoder JSONEncoder
-	name    string
 }
 
+var ErrInvalidConnection = fmt.Errorf("invalid connection")
+
 // Creates a new Publisher instance. Options can be passed to customize the behavior of the Publisher.
-func (c *Connector) NewPublisher(options ...PublishOption) (*Publisher, error) {
+func NewPublisher(conn *Connection, options ...PublishOption) (*Publisher, error) {
 	const errMessage = "failed to create publisher: %w"
 
 	opt := defaultPublishOptions()
@@ -33,35 +33,15 @@ func (c *Connector) NewPublisher(options ...PublishOption) (*Publisher, error) {
 		options[i](opt)
 	}
 
-	if c.publishConnection == nil {
-		c.publishConnection = &connection{
-			amqpConnectionMtx:    &sync.Mutex{},
-			amqpChannelMtx:       &sync.Mutex{},
-			connectionCloseWG:    &sync.WaitGroup{},
-			publishersMtx:        &sync.Mutex{},
-			publishers:           make(map[string]*Publisher),
-			reconnectFailChanMtx: &sync.Mutex{},
-			reconnectFailChan:    make(chan error, reconnectFailChanSize),
-		}
-	}
-
-	publisherName := newRandomString()
-
-	err := connect(c.publishConnection, c.options, c.log, publish)
-	if err != nil {
-		return nil, fmt.Errorf(errMessage, err)
+	if conn == nil {
+		return nil, fmt.Errorf(errMessage, ErrInvalidConnection)
 	}
 
 	publisher := &Publisher{
-		channel: c.publishConnection.amqpChannel,
+		conn:    conn,
 		options: opt,
-		encoder: c.options.Codec.Encoder,
-		name:    publisherName,
+		encoder: conn.options.Codec.Encoder,
 	}
-
-	c.publishConnection.publishersMtx.Lock()
-	c.publishConnection.publishers[publisherName] = publisher
-	c.publishConnection.publishersMtx.Unlock()
 
 	return publisher, nil
 }
@@ -139,7 +119,7 @@ func (publisher *Publisher) sendMessage(ctx context.Context, routingKeys []strin
 			AppId:           options.AppID,
 		}
 
-		if err := publisher.channel.PublishWithContext(
+		if err := publisher.conn.amqpChannel.PublishWithContext(
 			ctx,
 			options.Exchange,
 			key,

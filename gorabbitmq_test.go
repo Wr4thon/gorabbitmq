@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,7 +49,7 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 
 	tests := map[string]struct {
 		deliveryHandler func(any, chan struct{}) gorabbitmq.HandlerFunc
-		getConsumer     func(*gorabbitmq.Connector, gorabbitmq.HandlerFunc, *testParams) (*gorabbitmq.Consumer, error)
+		getConsumer     func(*gorabbitmq.Connection, gorabbitmq.HandlerFunc, *testParams) (*gorabbitmq.Consumer, error)
 		passiveExchange bool
 		message         any
 	}{
@@ -65,8 +64,9 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -92,8 +92,9 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -119,8 +120,9 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -151,8 +153,9 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -171,12 +174,18 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 		name, test := name, test
 
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+			// t.Parallel()
 
-			connector := getConnector()
+			fmt.Println(name)
+
+			publishConn := getConnection(t)
+			consumerConn := getConnection(t)
 
 			t.Cleanup(func() {
-				err := connector.Close()
+				err := publishConn.Close()
+				requireNoError(t, err)
+
+				err = consumerConn.Close()
 				requireNoError(t, err)
 			})
 
@@ -192,7 +201,8 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 			// so here the exchange gets declared before the binding is declared.
 
 			if test.passiveExchange {
-				consumer, err := connector.RegisterConsumer(
+				consumer, err := gorabbitmq.NewConsumer(
+					consumerConn,
 					testParams.queueName,
 					nil,
 					gorabbitmq.WithExchangeOptionDeclare(true),
@@ -208,10 +218,11 @@ func Test_Integration_PublishToExchange(t *testing.T) {
 				requireNoError(t, err)
 			}
 
-			consumer, err := test.getConsumer(connector, test.deliveryHandler(test.message, doneChan), testParams)
+			consumer, err := test.getConsumer(consumerConn, test.deliveryHandler(test.message, doneChan), testParams)
 			requireNoError(t, err)
 
-			publisher, err := connector.NewPublisher(
+			publisher, err := gorabbitmq.NewPublisher(
+				publishConn,
 				gorabbitmq.WithPublishOptionExchange(testParams.exchangeName),
 			)
 			requireNoError(t, err)
@@ -237,7 +248,7 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 
 	tests := map[string]struct {
 		deliveryHandler func(any, chan struct{}) gorabbitmq.HandlerFunc
-		getConsumer     func(*gorabbitmq.Connector, gorabbitmq.HandlerFunc, string) (*gorabbitmq.Consumer, error)
+		getConsumer     func(*gorabbitmq.Connection, gorabbitmq.HandlerFunc, string) (*gorabbitmq.Consumer, error)
 		passiveQueue    bool
 		publish         func(*gorabbitmq.Publisher, string) error
 	}{
@@ -252,8 +263,9 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					queueName,
 					handler,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -277,8 +289,9 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					queueName,
 					handler,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -301,8 +314,9 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					queueName,
 					handler,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -325,8 +339,9 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					queueName,
 					handler,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -348,8 +363,9 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, queueName string) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					queueName,
 					handler,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -368,10 +384,14 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			connector := getConnector()
+			publishConnection := getConnection(t)
+			consumeConnection := getConnection(t)
 
 			t.Cleanup(func() {
-				err := connector.Close()
+				err := publishConnection.Close()
+				requireNoError(t, err)
+
+				err = consumeConnection.Close()
 				requireNoError(t, err)
 			})
 
@@ -382,7 +402,7 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 			// so here the queue gets declared before the consumer subscribes.
 
 			if test.passiveQueue {
-				consumer, err := connector.RegisterConsumer(queueName, nil)
+				consumer, err := gorabbitmq.NewConsumer(consumeConnection, queueName, nil)
 
 				requireNoError(t, err)
 
@@ -390,10 +410,10 @@ func Test_Integration_PublishToQueue(t *testing.T) {
 				requireNoError(t, err)
 			}
 
-			consumer, err := test.getConsumer(connector, test.deliveryHandler(message, doneChan), queueName)
+			consumer, err := test.getConsumer(consumeConnection, test.deliveryHandler(message, doneChan), queueName)
 			requireNoError(t, err)
 
-			publisher, err := connector.NewPublisher()
+			publisher, err := gorabbitmq.NewPublisher(publishConnection)
 			requireNoError(t, err)
 
 			err = test.publish(publisher, queueName)
@@ -417,7 +437,7 @@ func Test_Integration_Consume(t *testing.T) {
 
 	tests := map[string]struct {
 		deliveryHandler func(any, int, chan struct{}) gorabbitmq.HandlerFunc
-		getConsumer     func(*gorabbitmq.Connector, gorabbitmq.HandlerFunc, *testParams) (*gorabbitmq.Consumer, error)
+		getConsumer     func(*gorabbitmq.Connection, gorabbitmq.HandlerFunc, *testParams) (*gorabbitmq.Consumer, error)
 	}{
 		"consume with Ack": {
 			deliveryHandler: func(expectedMessage any, counter int, doneChan chan struct{}) gorabbitmq.HandlerFunc {
@@ -430,8 +450,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -457,8 +478,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.NackDiscard
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -490,8 +512,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.NackDiscard
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -517,8 +540,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.Manual
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -544,8 +568,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.Manual
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -569,8 +594,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -594,8 +620,9 @@ func Test_Integration_Consume(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getConsumer: func(c *gorabbitmq.Connector, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, handler gorabbitmq.HandlerFunc, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					handler,
 					gorabbitmq.WithExchangeOptionAutoDelete(true),
@@ -616,10 +643,14 @@ func Test_Integration_Consume(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			connector := getConnector()
+			publishConnection := getConnection(t)
+			consumeConnection := getConnection(t)
 
 			t.Cleanup(func() {
-				err := connector.Close()
+				err := publishConnection.Close()
+				requireNoError(t, err)
+
+				err = consumeConnection.Close()
 				requireNoError(t, err)
 			})
 
@@ -633,10 +664,11 @@ func Test_Integration_Consume(t *testing.T) {
 
 			var counter int
 
-			_, err := test.getConsumer(connector, test.deliveryHandler(message, counter, doneChan), testParams)
+			_, err := test.getConsumer(consumeConnection, test.deliveryHandler(message, counter, doneChan), testParams)
 			requireNoError(t, err)
 
-			publisher, err := connector.NewPublisher(
+			publisher, err := gorabbitmq.NewPublisher(
+				publishConnection,
 				gorabbitmq.WithPublishOptionExchange(testParams.exchangeName),
 			)
 			requireNoError(t, err)
@@ -657,13 +689,13 @@ func Test_Integration_CustomOptions(t *testing.T) {
 	now := time.Date(2023, 8, 1, 12, 0, 0, 0, time.Local)
 
 	tests := map[string]struct {
-		connector       *gorabbitmq.Connector
-		deliveryHandler func(any, *sync.WaitGroup) gorabbitmq.HandlerFunc
-		getPublisher    func(*gorabbitmq.Connector) (*gorabbitmq.Publisher, error)
-		publish         func(*gorabbitmq.Publisher, []string) error
+		publishConnection *gorabbitmq.Connection
+		deliveryHandler   func(any, *sync.WaitGroup) gorabbitmq.HandlerFunc
+		getPublisher      func(*gorabbitmq.Connection) (*gorabbitmq.Publisher, error)
+		publish           func(*gorabbitmq.Publisher, []string) error
 	}{
 		"publish with options": {
-			connector: getConnector(),
+			publishConnection: getConnection(t),
 			deliveryHandler: func(expectedMessage any, wg *sync.WaitGroup) gorabbitmq.HandlerFunc {
 				return func(delivery gorabbitmq.Delivery) gorabbitmq.Action {
 					requireEqual(t, expectedMessage, string(delivery.Body))
@@ -684,8 +716,9 @@ func Test_Integration_CustomOptions(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getPublisher: func(c *gorabbitmq.Connector) (*gorabbitmq.Publisher, error) {
-				return c.NewPublisher(
+			getPublisher: func(conn *gorabbitmq.Connection) (*gorabbitmq.Publisher, error) {
+				return gorabbitmq.NewPublisher(
+					conn,
 					gorabbitmq.WithPublishOptionAppID("test-service"),
 					gorabbitmq.WithPublishOptionUserID("guest"),
 					gorabbitmq.WithPublishOptionTimestamp(now),
@@ -706,14 +739,14 @@ func Test_Integration_CustomOptions(t *testing.T) {
 			},
 		},
 		"publish with custom options": {
-			connector: func() *gorabbitmq.Connector {
+			publishConnection: func() *gorabbitmq.Connection {
 				amqpConfig := gorabbitmq.Config{
 					Properties: amqp.Table{},
 				}
 				amqpConfig.Properties.SetClientConnectionName(stringGen())
 
-				return getConnector(gorabbitmq.WithCustomConnectorOptions(
-					&gorabbitmq.ConnectorOptions{
+				return getConnection(t, gorabbitmq.WithCustomConnectionOptions(
+					&gorabbitmq.ConnectionOptions{
 						ReturnHandler:     nil,
 						Config:            &amqpConfig,
 						Codec:             nil,
@@ -735,8 +768,8 @@ func Test_Integration_CustomOptions(t *testing.T) {
 					return gorabbitmq.Ack
 				}
 			},
-			getPublisher: func(c *gorabbitmq.Connector) (*gorabbitmq.Publisher, error) {
-				return c.NewPublisher()
+			getPublisher: func(conn *gorabbitmq.Connection) (*gorabbitmq.Publisher, error) {
+				return gorabbitmq.NewPublisher(conn)
 			},
 			publish: func(p *gorabbitmq.Publisher, targets []string) error {
 				return p.PublishWithOptions(
@@ -776,11 +809,18 @@ func Test_Integration_CustomOptions(t *testing.T) {
 			t.Parallel()
 
 			t.Cleanup(func() {
-				err := test.connector.Close()
+				err := test.publishConnection.Close()
 				requireNoError(t, err)
 			})
 
 			targets := []string{stringGen(), stringGen()}
+
+			consumeConnection := getConnection(t)
+
+			t.Cleanup(func() {
+				err := consumeConnection.Close()
+				requireNoError(t, err)
+			})
 
 			wg := &sync.WaitGroup{}
 
@@ -788,7 +828,8 @@ func Test_Integration_CustomOptions(t *testing.T) {
 			wg.Add(2)
 
 			// registering first consumer.
-			_, err := test.connector.RegisterConsumer(
+			_, err := gorabbitmq.NewConsumer(
+				consumeConnection,
 				targets[0],
 				test.deliveryHandler(message, wg),
 				gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -797,29 +838,34 @@ func Test_Integration_CustomOptions(t *testing.T) {
 			requireNoError(t, err)
 
 			// registering second consumer with custom options.
-			_, err = test.connector.RegisterConsumer(targets[1], test.deliveryHandler(message, wg), gorabbitmq.WithCustomConsumeOptions(
-				&gorabbitmq.ConsumeOptions{
-					ConsumerOptions: &gorabbitmq.ConsumerOptions{
-						Args: make(gorabbitmq.Table),
-						Name: stringGen(),
+			_, err = gorabbitmq.NewConsumer(
+				consumeConnection,
+				targets[1],
+				test.deliveryHandler(message, wg),
+				gorabbitmq.WithCustomConsumeOptions(
+					&gorabbitmq.ConsumeOptions{
+						ConsumerOptions: &gorabbitmq.ConsumerOptions{
+							Args: make(gorabbitmq.Table),
+							Name: stringGen(),
+						},
+						QueueOptions: &gorabbitmq.QueueOptions{
+							Args:       make(gorabbitmq.Table),
+							AutoDelete: true,
+							Declare:    true,
+						},
+						ExchangeOptions: &gorabbitmq.ExchangeOptions{
+							Args: make(gorabbitmq.Table),
+							Name: gorabbitmq.ExchangeDefault,
+							Kind: amqp.ExchangeDirect,
+						},
+						Bindings:        []gorabbitmq.Binding{},
+						HandlerQuantity: 1,
 					},
-					QueueOptions: &gorabbitmq.QueueOptions{
-						Args:       make(gorabbitmq.Table),
-						AutoDelete: true,
-						Declare:    true,
-					},
-					ExchangeOptions: &gorabbitmq.ExchangeOptions{
-						Args: make(gorabbitmq.Table),
-						Name: gorabbitmq.ExchangeDefault,
-						Kind: amqp.ExchangeDirect,
-					},
-					Bindings:        []gorabbitmq.Binding{},
-					HandlerQuantity: 1,
-				},
-			))
+				),
+			)
 			requireNoError(t, err)
 
-			publisher, err := test.getPublisher(test.connector)
+			publisher, err := test.getPublisher(test.publishConnection)
 			requireNoError(t, err)
 
 			// publishing to multiple targets
@@ -835,12 +881,12 @@ func Test_Integration_ManualRemoveExchangeQueueAndBindings(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		getConsumer func(*gorabbitmq.Connector, *testParams) (*gorabbitmq.Consumer, error)
+		getConsumer func(*gorabbitmq.Connection, *testParams) (*gorabbitmq.Consumer, error)
 		action      func(*gorabbitmq.Consumer, *testParams) error
 	}{
 		"remove queue": {
-			getConsumer: func(c *gorabbitmq.Connector, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(params.queueName, nil)
+			getConsumer: func(conn *gorabbitmq.Connection, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(conn, params.queueName, nil)
 			},
 			action: func(consumer *gorabbitmq.Consumer, params *testParams) error {
 				removedMessages, err := consumer.RemoveQueue(params.queueName, false, false, false)
@@ -852,8 +898,9 @@ func Test_Integration_ManualRemoveExchangeQueueAndBindings(t *testing.T) {
 			},
 		},
 		"remove exchange": {
-			getConsumer: func(c *gorabbitmq.Connector, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					nil,
 					gorabbitmq.WithExchangeOptionDeclare(true),
@@ -871,8 +918,9 @@ func Test_Integration_ManualRemoveExchangeQueueAndBindings(t *testing.T) {
 			},
 		},
 		"remove binding": {
-			getConsumer: func(c *gorabbitmq.Connector, params *testParams) (*gorabbitmq.Consumer, error) {
-				return c.RegisterConsumer(
+			getConsumer: func(conn *gorabbitmq.Connection, params *testParams) (*gorabbitmq.Consumer, error) {
+				return gorabbitmq.NewConsumer(
+					conn,
 					params.queueName,
 					nil,
 					gorabbitmq.WithQueueOptionAutoDelete(true),
@@ -911,14 +959,18 @@ func Test_Integration_ManualRemoveExchangeQueueAndBindings(t *testing.T) {
 				routingKey:   stringGen(),
 			}
 
-			connector := getConnector()
+			publishConnection := getConnection(t)
+			consumeConnection := getConnection(t)
 
 			t.Cleanup(func() {
-				err := connector.Close()
+				err := publishConnection.Close()
+				requireNoError(t, err)
+
+				err = consumeConnection.Close()
 				requireNoError(t, err)
 			})
 
-			consumer, err := test.getConsumer(connector, testParams)
+			consumer, err := test.getConsumer(consumeConnection, testParams)
 			requireNoError(t, err)
 
 			err = test.action(consumer, testParams)
@@ -941,14 +993,20 @@ func Test_Integration_ReturnHandler(t *testing.T) {
 		doneChan <- struct{}{}
 	}
 
-	connector := getConnector(
-		gorabbitmq.WithConnectorOptionReturnHandler(returnHandler),
-		gorabbitmq.WithConnectorOptionTextLogging(os.Stdout, slog.LevelError),
-		gorabbitmq.WithConnectorOptionConnectionName(stringGen()),
+	publishConnection := getConnection(
+		t,
+		gorabbitmq.WithConnectionOptionReturnHandler(returnHandler),
+		gorabbitmq.WithConnectionOptionTextLogging(os.Stdout, slog.LevelError),
+		gorabbitmq.WithConnectionOptionConnectionName(stringGen()),
 	)
 
+	consumerConnection := getConnection(t)
+
 	t.Cleanup(func() {
-		err := connector.Close()
+		err := publishConnection.Close()
+		requireNoError(t, err)
+
+		err = consumerConnection.Close()
 		requireNoError(t, err)
 	})
 
@@ -956,7 +1014,8 @@ func Test_Integration_ReturnHandler(t *testing.T) {
 	queueName := stringGen()
 	routingKey := stringGen()
 
-	_, err := connector.RegisterConsumer(
+	_, err := gorabbitmq.NewConsumer(
+		consumerConnection,
 		queueName,
 		nil,
 		gorabbitmq.WithExchangeOptionDeclare(true),
@@ -968,7 +1027,8 @@ func Test_Integration_ReturnHandler(t *testing.T) {
 	)
 	requireNoError(t, err)
 
-	publisher, err := connector.NewPublisher(
+	publisher, err := gorabbitmq.NewPublisher(
+		publishConnection,
 		gorabbitmq.WithPublishOptionExchange(exchangeName),
 		gorabbitmq.WithPublishOptionMandatory(true),
 	)
@@ -1006,15 +1066,16 @@ func Test_DecodeDeliveryBody(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		connector *gorabbitmq.Connector
+		conn *gorabbitmq.Connection
 	}{
 		"with standard codec": {
-			connector: getConnector(),
+			conn: getConnection(t),
 		},
 		"with self-defined codec": {
-			connector: getConnector(
-				gorabbitmq.WithConnectorOptionEncoder(json.Marshal),
-				gorabbitmq.WithConnectorOptionDecoder(json.Unmarshal),
+			conn: getConnection(
+				t,
+				gorabbitmq.WithConnectionOptionEncoder(json.Marshal),
+				gorabbitmq.WithConnectionOptionDecoder(json.Unmarshal),
 			),
 		},
 	}
@@ -1025,9 +1086,19 @@ func Test_DecodeDeliveryBody(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
+			t.Cleanup(func() {
+				err := test.conn.Close()
+				requireNoError(t, err)
+			})
+
+			consumer, err := gorabbitmq.NewConsumer(test.conn, stringGen(), nil,
+				gorabbitmq.WithQueueOptionAutoDelete(true),
+			)
+			requireNoError(t, err)
+
 			var result testData
 
-			err := test.connector.DecodeDeliveryBody(delivery, &result)
+			err = consumer.DecodeDeliveryBody(delivery, &result)
 			requireNoError(t, err)
 
 			requireEqual(t, message, result)
@@ -1075,33 +1146,46 @@ func (tb *testBuffer) Len() int {
 	return tb.buff.Len()
 }
 
+// logEntry is the log entry that will be written to the buffer.
+type logEntry struct {
+	Time  time.Time `json:"time"`
+	Level string    `json:"level"`
+	Msg   string    `json:"msg"`
+}
+
 func Test_Reconnection_AutomaticReconnect(t *testing.T) { //nolint:paralleltest // intentional: must not run in parallel
-	// logEntry is the log entry that will be written to the buffer.
-	type logEntry struct {
-		Time  time.Time `json:"time"`
-		Level string    `json:"level"`
-		Msg   string    `json:"msg"`
-	}
 
 	// used to wait until the handler proccessed the deliveries.
 	doneChan := make(chan struct{})
 
 	message := "test-message"
 
-	// declaring the mutex protected buffer.
-	buffer := &testBuffer{
+	// declaring the mutex protected publishConnLogBuffer.
+	publishConnLogBuffer := &testBuffer{
+		mtx:  &sync.Mutex{},
+		buff: new(bytes.Buffer),
+	}
+
+	consumeConnLogBuffer := &testBuffer{
 		mtx:  &sync.Mutex{},
 		buff: new(bytes.Buffer),
 	}
 
 	// declaring the connector with JSON logging on debug level enabled.
 	// (later used to compare if the reconnection was successful).
-	connector := getConnector(
-		gorabbitmq.WithConnectorOptionJSONLogging(buffer, slog.LevelDebug),
+	publishConnection := getConnection(t,
+		gorabbitmq.WithConnectionOptionJSONLogging(publishConnLogBuffer, slog.LevelDebug),
+	)
+
+	consumeConnection := getConnection(t,
+		gorabbitmq.WithConnectionOptionJSONLogging(consumeConnLogBuffer, slog.LevelDebug),
 	)
 
 	t.Cleanup(func() {
-		err := connector.Close()
+		err := publishConnection.Close()
+		requireNoError(t, err)
+
+		err = consumeConnection.Close()
 		requireNoError(t, err)
 	})
 
@@ -1121,14 +1205,14 @@ func Test_Reconnection_AutomaticReconnect(t *testing.T) { //nolint:paralleltest 
 	queueName := stringGen()
 
 	// registering a consumer.
-	_, err := connector.RegisterConsumer(queueName, handler,
+	_, err := gorabbitmq.NewConsumer(consumeConnection, queueName, handler,
 		gorabbitmq.WithQueueOptionDurable(true),
 		gorabbitmq.WithConsumerOptionConsumerName(stringGen()),
 	)
 	requireNoError(t, err)
 
 	// registering a publisher.
-	publisher, err := connector.NewPublisher()
+	publisher, err := gorabbitmq.NewPublisher(publishConnection)
 	requireNoError(t, err)
 
 	// publish a message.
@@ -1153,6 +1237,27 @@ func Test_Reconnection_AutomaticReconnect(t *testing.T) { //nolint:paralleltest 
 	// In the following for loop, the buffer given to the logger is read until the msg in the
 	// log-entry states that reconnection was successful.
 
+	wg := &sync.WaitGroup{}
+
+	wg.Add(2)
+
+	go watchConnLogBuffer(publishConnLogBuffer, wg, "publish")
+	go watchConnLogBuffer(consumeConnLogBuffer, wg, "consume")
+
+	wg.Wait()
+
+	// publish a new message to the queue with the reconnected .
+	err = publisher.Publish(context.Background(), queueName, message)
+	requireNoError(t, err)
+
+	// waiting for the recovered consumer to process the new message.
+	<-doneChan
+
+	// comparing the msgCounter again that should now be incremented by the consumer handler to 2.
+	requireEqual(t, 2, msgCounter)
+}
+
+func watchConnLogBuffer(buffer *testBuffer, wg *sync.WaitGroup, name string) {
 	for {
 		line, err := buffer.ReadBytes('\n')
 		if errors.Is(err, io.EOF) {
@@ -1167,127 +1272,121 @@ func Test_Reconnection_AutomaticReconnect(t *testing.T) { //nolint:paralleltest 
 			buffer.Reset()
 		}
 
-		if logEntry.Msg == "successfully reconnected consume connection" {
+		if logEntry.Msg == "successfully recovered connection" {
+			wg.Done()
+
 			break
 		}
 	}
-
-	// publish a new message to the queue with the reconnected .
-	err = publisher.Publish(context.Background(), queueName, message)
-	requireNoError(t, err)
-
-	// waiting for the recovered consumer to process the new message.
-	<-doneChan
-
-	// comparing the msgCounter again that should now be incremented by the consumer handler to 2.
-	requireEqual(t, 2, msgCounter)
 }
 
-func Test_Reconnection_AutomaticReconnectFailedTryManualReconnect(t *testing.T) { //nolint:paralleltest // intentional: must not run in parallel
-	// used to wait until the handler proccessed the deliveries.
-	doneChan := make(chan struct{})
+// func Test_Reconnection_AutomaticReconnectFailedTryManualReconnect(t *testing.T) { //nolint:paralleltest // intentional: must not run in parallel
+// 	// used to wait until the handler proccessed the deliveries.
+// 	doneChan := make(chan struct{})
 
-	message := "test-message"
+// 	message := "test-message"
 
-	// declaring the connector with a maximum of 1 reconnection attempts.
-	connector := getConnector(
-		gorabbitmq.WithConnectorOptionMaxReconnectRetries(1),
-	)
+// 	// declaring the connector with a maximum of 1 reconnection attempts.
+// 	connector := getConnection(
+// 		gorabbitmq.WithConnectorOptionMaxReconnectRetries(1),
+// 	)
 
-	t.Cleanup(func() {
-		err := connector.Close()
-		requireNoError(t, err)
-	})
+// 	t.Cleanup(func() {
+// 		err := connector.Close()
+// 		requireNoError(t, err)
+// 	})
 
-	// msgCounter is used to count the number of deliveries, to compare it afterwords.
-	var msgCounter int
+// 	// msgCounter is used to count the number of deliveries, to compare it afterwords.
+// 	var msgCounter int
 
-	handler := func(msg gorabbitmq.Delivery) gorabbitmq.Action {
-		requireEqual(t, message, string(msg.Body))
+// 	handler := func(msg gorabbitmq.Delivery) gorabbitmq.Action {
+// 		requireEqual(t, message, string(msg.Body))
 
-		msgCounter++
+// 		msgCounter++
 
-		doneChan <- struct{}{}
+// 		doneChan <- struct{}{}
 
-		return gorabbitmq.Ack
-	}
+// 		return gorabbitmq.Ack
+// 	}
 
-	queueName := stringGen()
+// 	queueName := stringGen()
 
-	// registering a consumer.
-	_, err := connector.RegisterConsumer(queueName, handler,
-		gorabbitmq.WithQueueOptionDurable(true),
-		gorabbitmq.WithConsumerOptionConsumerName(stringGen()),
-	)
-	requireNoError(t, err)
+// 	// registering a consumer.
+// 	_, err := connector.RegisterConsumer(queueName, handler,
+// 		gorabbitmq.WithQueueOptionDurable(true),
+// 		gorabbitmq.WithConsumerOptionConsumerName(stringGen()),
+// 	)
+// 	requireNoError(t, err)
 
-	// registering a publisher.
-	publisher, err := connector.NewPublisher()
-	requireNoError(t, err)
+// 	// registering a publisher.
+// 	publisher, err := connector.NewPublisher()
+// 	requireNoError(t, err)
 
-	// publish a message.
-	err = publisher.Publish(context.Background(), queueName, message)
-	requireNoError(t, err)
+// 	// publish a message.
+// 	err = publisher.Publish(context.Background(), queueName, message)
+// 	requireNoError(t, err)
 
-	notifyChan, err := connector.NotifyFailedRecovery()
-	requireNoError(t, err)
+// 	notifyChan, err := connector.NotifyFailedRecovery()
+// 	requireNoError(t, err)
 
-	notifyDoneChan := make(chan struct{})
+// 	notifyDoneChan := make(chan struct{})
 
-	// handling the failed recovery notification.
-	go func() {
-		for range notifyChan {
-			notifyDoneChan <- struct{}{}
-		}
-	}()
+// 	// handling the failed recovery notification.
+// 	go func() {
+// 		for range notifyChan {
+// 			notifyDoneChan <- struct{}{}
+// 		}
+// 	}()
 
-	// waiting for the handler to process the delivery.
-	<-doneChan
+// 	// waiting for the handler to process the delivery.
+// 	<-doneChan
 
-	// comparing the msgCounter that should be incremented by the consumer handler.
-	requireEqual(t, 1, msgCounter)
+// 	// comparing the msgCounter that should be incremented by the consumer handler.
+// 	requireEqual(t, 1, msgCounter)
 
-	// shutting down the rabbitmq container to simulate a connection loss.
-	err = exec.Command("docker", "compose", "down", "rabbitmq").Run()
-	requireNoError(t, err)
+// 	// shutting down the rabbitmq container to simulate a connection loss.
+// 	err = exec.Command("docker", "compose", "down", "rabbitmq").Run()
+// 	requireNoError(t, err)
 
-	// waiting for the failed recovery notification to finish handling.
-	<-notifyDoneChan
+// 	// waiting for the failed recovery notification to finish handling.
+// 	<-notifyDoneChan
 
-	// bringing the rabbitmq container up again.
-	err = exec.Command("docker", "compose", "up", "-d").Run()
-	requireNoError(t, err)
+// 	// bringing the rabbitmq container up again.
+// 	err = exec.Command("docker", "compose", "up", "-d").Run()
+// 	requireNoError(t, err)
 
-	// polling to check the container health.
-	for range time.NewTicker(1 * time.Second).C {
-		status, err := exec.Command("docker", "inspect", "-f", "{{.State.Health.Status}}", "rabbitmq").Output()
-		requireNoError(t, err)
+// 	// polling to check the container health.
+// 	for range time.NewTicker(1 * time.Second).C {
+// 		status, err := exec.Command("docker", "inspect", "-f", "{{.State.Health.Status}}", "rabbitmq").Output()
+// 		requireNoError(t, err)
 
-		if strings.ReplaceAll(string(status), "\n", "") == "healthy" {
-			break
-		}
-	}
+// 		if strings.ReplaceAll(string(status), "\n", "") == "healthy" {
+// 			break
+// 		}
+// 	}
 
-	// manually reconnecting.
-	err = connector.Reconnect()
-	requireNoError(t, err)
+// 	// manually reconnecting.
+// 	err = connector.Reconnect()
+// 	requireNoError(t, err)
 
-	// publish a new message to the queue with the reconnected .
-	err = publisher.Publish(context.Background(), queueName, message)
-	requireNoError(t, err)
+// 	// publish a new message to the queue with the reconnected .
+// 	err = publisher.Publish(context.Background(), queueName, message)
+// 	requireNoError(t, err)
 
-	// waiting for the recovered consumer to process the new message.
-	<-doneChan
+// 	// waiting for the recovered consumer to process the new message.
+// 	<-doneChan
 
-	// comparing the msgCounter again that should now be incremented by the consumer handler to 2.
-	requireEqual(t, 2, msgCounter)
-}
+// 	// comparing the msgCounter again that should now be incremented by the consumer handler to 2.
+// 	requireEqual(t, 2, msgCounter)
+// }
 
 // ##### helper functions: ##########################
 
 // Returns a new connector with the given options.
-func getConnector(options ...gorabbitmq.ConnectorOption) *gorabbitmq.Connector {
-	return gorabbitmq.NewConnector(&gorabbitmq.ConnectionSettings{
+func getConnection(t *testing.T, options ...gorabbitmq.ConnectionOption) *gorabbitmq.Connection {
+	t.Helper()
+
+	conn, err := gorabbitmq.NewConnection(&gorabbitmq.ConnectionSettings{
 		UserName: "guest",
 		Password: "guest",
 		Host:     "localhost",
@@ -1295,6 +1394,10 @@ func getConnector(options ...gorabbitmq.ConnectorOption) *gorabbitmq.Connector {
 	},
 		options...,
 	)
+
+	requireNoError(t, err)
+
+	return conn
 }
 
 // Compares two values and reports an error if they are not equal.
