@@ -21,20 +21,18 @@ type Publisher struct {
 	encoder JSONEncoder
 }
 
-var ErrInvalidConnection = fmt.Errorf("invalid connection")
-
 // Creates a new Publisher instance. Options can be passed to customize the behavior of the Publisher.
 func NewPublisher(conn *Connection, options ...PublishOption) (*Publisher, error) {
 	const errMessage = "failed to create publisher: %w"
+
+	if conn == nil {
+		return nil, fmt.Errorf(errMessage, ErrInvalidConnection)
+	}
 
 	opt := defaultPublishOptions()
 
 	for i := 0; i < len(options); i++ {
 		options[i](opt)
-	}
-
-	if conn == nil {
-		return nil, fmt.Errorf(errMessage, ErrInvalidConnection)
 	}
 
 	publisher := &Publisher{

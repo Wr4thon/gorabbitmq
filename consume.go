@@ -30,6 +30,10 @@ type (
 func NewConsumer(conn *Connection, queueName string, handler HandlerFunc, options ...ConsumeOption) (*Consumer, error) {
 	const errMessage = "failed to create consumer: %w"
 
+	if conn == nil {
+		return nil, fmt.Errorf(errMessage, ErrInvalidConnection)
+	}
+
 	opt := defaultConsumerOptions()
 
 	for i := 0; i < len(options); i++ {
@@ -50,22 +54,9 @@ func NewConsumer(conn *Connection, queueName string, handler HandlerFunc, option
 
 	consumer.watchRecoverConsumerChan()
 
-	consumer.conn.consumerSubscribed = true
+	consumer.conn.runningConsumers++
 
 	return consumer, nil
-}
-
-func (c *Consumer) watchRecoverConsumerChan() {
-	go func() {
-		for {
-			select {
-			case <-c.conn.recoverConsumerChan:
-				c.conn.consumerRecoveredChan <- c.startConsuming()
-			case <-c.conn.closeChan:
-				return
-			}
-		}
-	}()
 }
 
 // Close stops consuming messages from the subscribed queue.
@@ -76,60 +67,7 @@ func (c *Consumer) Close() error {
 		return fmt.Errorf(errMessage, err)
 	}
 
-	c.conn.consumerSubscribed = false
-
-	return nil
-}
-
-// RemoveQueue removes the queue from the server including all bindings then purges the messages based on
-// server configuration, returning the number of messages purged.
-//
-// When ifUnused is true, the queue will not be deleted if there are any consumers on the queue.
-// If there are consumers, an error will be returned and the channel will be closed.
-//
-// When ifEmpty is true, the queue will not be deleted if there are any messages remaining on the queue.
-// If there are messages, an error will be returned and the channel will be closed.
-func (c *Consumer) RemoveQueue(name string, ifUnused bool, ifEmpty bool, noWait bool) (int, error) {
-	const errMessage = "failed to remove queue: %w"
-
-	removedMessages, err := c.conn.amqpChannel.QueueDelete(name, ifUnused, ifEmpty, noWait)
-	if err != nil {
-		return 0, fmt.Errorf(errMessage, err)
-	}
-
-	return removedMessages, nil
-}
-
-// RemoveBinding removes a binding between an exchange and queue matching the key and arguments.
-//
-// It is possible to send and empty string for the exchange name which means to unbind the queue from the default exchange.
-func (c *Consumer) RemoveBinding(queueName string, routingKey string, exchangeName string, args Table) error {
-	const errMessage = "failed to remove binding: %w"
-
-	err := c.conn.amqpChannel.QueueUnbind(queueName, routingKey, exchangeName, amqp.Table(args))
-	if err != nil {
-		return fmt.Errorf(errMessage, err)
-	}
-
-	return nil
-}
-
-// ExchangeDelete removes the named exchange from the server. When an exchange is deleted all queue bindings
-// on the exchange are also deleted. If this exchange does not exist, the channel will be closed with an error.
-//
-// When ifUnused is true, the server will only delete the exchange if it has no queue bindings.
-// If the exchange has queue bindings the server does not delete it but close the channel with an exception instead.
-// Set this to true if you are not the sole owner of the exchange.
-//
-// When noWait is true, do not wait for a server confirmation that the exchange has been deleted.
-// Failing to delete the channel could close the channel. Add a NotifyClose listener to respond to these channel exceptions.
-func (c *Consumer) RemoveExchange(name string, ifUnused bool, noWait bool) error {
-	const errMessage = "failed to remove exchange: %w"
-
-	err := c.conn.amqpChannel.ExchangeDelete(name, ifUnused, noWait)
-	if err != nil {
-		return fmt.Errorf(errMessage, err)
-	}
+	c.conn.runningConsumers--
 
 	return nil
 }
@@ -224,6 +162,10 @@ func (c *Consumer) handlerRoutine(deliveries <-chan amqp.Delivery, consumeOption
 	}
 }
 
-func (c *Connection) handleDelivery(delivery amqp.Delivery) {
-
+func (c *Consumer) watchRecoverConsumerChan() {
+	go func() {
+		for range c.conn.consumerRecoveryChan {
+			c.conn.consumerRecoveryChan <- c.startConsuming()
+		}
+	}()
 }

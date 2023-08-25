@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	closeWGDelta int = 2
-
+	closeWGDelta          int = 2
 	reconnectFailChanSize int = 32
 )
 
@@ -29,11 +28,9 @@ type Connection struct {
 	startRecoveryChan  chan struct{}
 	recoveryFailedChan chan error
 
-	recoverConsumerChan   chan struct{}
-	consumerRecoveredChan chan error
-	consumerSubscribed    bool
+	consumerRecoveryChan chan error
 
-	closeChan chan struct{}
+	runningConsumers int
 
 	logger *log
 
@@ -62,15 +59,13 @@ func NewConnection(settings *ConnectionSettings, options ...ConnectionOption) (*
 	}
 
 	conn := &Connection{
-		connectionCloseWG:     &sync.WaitGroup{},
-		startRecoveryChan:     make(chan struct{}),
-		recoveryFailedChan:    make(chan error, reconnectFailChanSize),
-		recoverConsumerChan:   make(chan struct{}),
-		consumerRecoveredChan: make(chan error),
-		closeChan:             make(chan struct{}),
-		logger:                newLogger(opt.logger),
-		returnHandler:         opt.ReturnHandler,
-		options:               opt,
+		connectionCloseWG:    &sync.WaitGroup{},
+		startRecoveryChan:    make(chan struct{}),
+		recoveryFailedChan:   make(chan error, reconnectFailChanSize),
+		consumerRecoveryChan: make(chan error),
+		logger:               newLogger(opt.logger),
+		returnHandler:        opt.ReturnHandler,
+		options:              opt,
 	}
 
 	err := conn.connect()
@@ -88,10 +83,6 @@ func (c *Connection) Close() error {
 	if c.amqpConnection != nil {
 		c.logger.logDebug("closing connection")
 
-		if c.consumerSubscribed {
-			c.closeChan <- struct{}{}
-		}
-
 		c.connectionCloseWG.Add(closeWGDelta)
 
 		err := c.amqpConnection.Close()
@@ -104,9 +95,7 @@ func (c *Connection) Close() error {
 
 		close(c.startRecoveryChan)
 		close(c.recoveryFailedChan)
-		close(c.recoverConsumerChan)
-		close(c.consumerRecoveredChan)
-		close(c.closeChan)
+		close(c.consumerRecoveryChan)
 	}
 
 	c.logger.logInfo("gracefully closed connection to rabbitmq")
@@ -114,29 +103,82 @@ func (c *Connection) Close() error {
 	return nil
 }
 
+// NotifyRecoveryFail returns a channel that will return an error when
+// the recovery has exeeded the maximum number of retries.
 func (c *Connection) NotifyRecoveryFail() (<-chan error, error) {
 	return c.recoveryFailedChan, nil
 }
 
-// // Reconnect can be used to manually reconnect to a RabbitMQ.
-// //
-// // Returns an error if the current connection persists.
-// func (c *Connection) Reconnect() error {
-// 	const errMessage = "failed to reconnect to rabbitmq: %w"
+// Reconnect can be used to manually reconnect to a RabbitMQ.
+//
+// Returns an error if the current connection persists.
+func (c *Connection) Reconnect() error {
+	const errMessage = "failed to reconnect to rabbitmq: %w"
 
-// 	if c.amqpConnection != nil {
-// 		return fmt.Errorf(errMessage, ErrHealthyConnection)
-// 	}
+	if c.amqpConnection != nil && !c.amqpConnection.IsClosed() {
+		return fmt.Errorf(errMessage, ErrHealthyConnection)
+	}
 
-// 	// c.watchReconnectionFailes()
+	err := c.startRecovery()
+	if err != nil {
+		return fmt.Errorf(errMessage, err)
+	}
 
-// 	err := c.startRecovery()
-// 	if err != nil {
-// 		return fmt.Errorf(errMessage, err)
-// 	}
+	return nil
+}
 
-// 	return nil
-// }
+// RemoveQueue removes the queue from the server including all bindings then purges the messages based on
+// server configuration, returning the number of messages purged.
+//
+// When ifUnused is true, the queue will not be deleted if there are any consumers on the queue.
+// If there are consumers, an error will be returned and the channel will be closed.
+//
+// When ifEmpty is true, the queue will not be deleted if there are any messages remaining on the queue.
+// If there are messages, an error will be returned and the channel will be closed.
+func (c *Connection) RemoveQueue(name string, ifUnused bool, ifEmpty bool, noWait bool) (int, error) {
+	const errMessage = "failed to remove queue: %w"
+
+	removedMessages, err := c.amqpChannel.QueueDelete(name, ifUnused, ifEmpty, noWait)
+	if err != nil {
+		return 0, fmt.Errorf(errMessage, err)
+	}
+
+	return removedMessages, nil
+}
+
+// RemoveBinding removes a binding between an exchange and queue matching the key and arguments.
+//
+// It is possible to send and empty string for the exchange name which means to unbind the queue from the default exchange.
+func (c *Connection) RemoveBinding(queueName string, routingKey string, exchangeName string, args Table) error {
+	const errMessage = "failed to remove binding: %w"
+
+	err := c.amqpChannel.QueueUnbind(queueName, routingKey, exchangeName, amqp.Table(args))
+	if err != nil {
+		return fmt.Errorf(errMessage, err)
+	}
+
+	return nil
+}
+
+// ExchangeDelete removes the named exchange from the server. When an exchange is deleted all queue bindings
+// on the exchange are also deleted. If this exchange does not exist, the channel will be closed with an error.
+//
+// When ifUnused is true, the server will only delete the exchange if it has no queue bindings.
+// If the exchange has queue bindings the server does not delete it but close the channel with an exception instead.
+// Set this to true if you are not the sole owner of the exchange.
+//
+// When noWait is true, do not wait for a server confirmation that the exchange has been deleted.
+// Failing to delete the channel could close the channel. Add a NotifyClose listener to respond to these channel exceptions.
+func (c *Connection) RemoveExchange(name string, ifUnused bool, noWait bool) error {
+	const errMessage = "failed to remove exchange: %w"
+
+	err := c.amqpChannel.ExchangeDelete(name, ifUnused, noWait)
+	if err != nil {
+		return fmt.Errorf(errMessage, err)
+	}
+
+	return nil
+}
 
 func (c *Connection) connect() error {
 	const errMessage = "failed to connect to rabbitmq: %w"
@@ -307,7 +349,7 @@ func (c *Connection) startRecovery() error {
 		return fmt.Errorf(errMessage, err)
 	}
 
-	if c.consumerSubscribed {
+	if c.runningConsumers > 0 {
 		err = c.recoverConsumer()
 		if err != nil {
 			return fmt.Errorf(errMessage, err)
@@ -322,9 +364,9 @@ func (c *Connection) startRecovery() error {
 func (c *Connection) recoverConsumer() error {
 	const errMessage = "failed to recover consumer %w"
 
-	c.recoverConsumerChan <- struct{}{}
+	c.consumerRecoveryChan <- nil
 
-	err := <-c.consumerRecoveredChan
+	err := <-c.consumerRecoveryChan
 	if err != nil {
 		return fmt.Errorf(errMessage, err)
 	}
